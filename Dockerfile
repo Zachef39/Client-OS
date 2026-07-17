@@ -1,6 +1,6 @@
 # Fallback Dockerfile — used if Railway's nixpacks builder ever fails.
-# Runs the exact same server/server.js entrypoint on Node 20.
-FROM node:20-alpine
+# Runs the exact same server/server.js entrypoint on Node 22 (Supabase v22+ requires native WebSocket).
+FROM node:22-alpine
 
 WORKDIR /app
 
