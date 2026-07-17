@@ -3,7 +3,22 @@
 Ship the Express server to Railway so `dash.faerberfitness.com` is always up,
 auto-restarts on crash, and no laptop needs to be running.
 
-Estimated time: **~30 minutes**. Follow the numbered steps in order.
+---
+
+## ⚡ TL;DR — 15 min from run to live
+
+**Already done (Claude):**
+- ✅ GitHub repo pushed: https://github.com/Zachef39/Client-OS
+- ✅ Code refactored for cloud (PORT env var, LOCAL_ONLY guards, graceful shutdown)
+- ✅ railway.toml + Dockerfile + .env.example + .gitignore
+
+**Your 4 steps when back:**
+1. **Railway** — you already signed up. Go to your dashboard.
+2. **New Project → Deploy from GitHub** → pick `Client-OS` → let it start (build will fail once, that's OK)
+3. **Variables tab** → paste env vars from `~/Desktop/Playground - Claude/.env` (list in `.env.example`). Redeploy.
+4. **Settings → Domains** → add `dash.faerberfitness.com` → copy CNAME target → GHL DNS → add CNAME record → done.
+
+Detailed walkthrough below.
 
 ---
 
