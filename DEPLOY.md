@@ -36,22 +36,13 @@ Both talk to the same Supabase — data stays in sync.
 - Sign in with GitHub (recommended — enables auto-deploy on push)
 - Free tier is fine to start; add a card if you want to remove the trial cap
 
-### 2. Create a new PRIVATE GitHub repo
-- On https://github.com/new create `faerber-client-os` under your account
-- Visibility: **Private** (this repo contains client data schemas + Trainerize logic)
-- **Do NOT** initialize with README/gitignore/license — the local repo already has them
+### 2. GitHub repo — ✅ ALREADY DONE
+Repo already created + pushed: **https://github.com/Zachef39/Client-OS**
+- Private ✅
+- Initial commit `f85bea9` (Railway deploy prep) pushed
 
-### 3. Push the local repo to GitHub
-Open Terminal on your Mac:
-
-```bash
-cd "/Users/zachef/Desktop/Playground - Claude/scripts/faerber-client-os"
-git remote add origin https://github.com/YOUR_USERNAME/faerber-client-os.git
-git branch -M main
-git push -u origin main
-```
-
-If GitHub asks for auth: use a personal access token (Settings → Developer settings → Tokens → Fine-grained → "repo" scope on the new repo).
+### 3. Skip — already pushed
+(No action needed)
 
 ### 4. Create the Railway project
 - Railway dashboard → **New Project** → **Deploy from GitHub repo**
@@ -118,15 +109,22 @@ NOTIFY_EMAIL
   ```
 - Open `https://YOUR_TEMP_URL.up.railway.app/v2/` — dashboard should load
 
-### 7. Wire up the custom domain
+### 7. Wire up the custom domain (GHL DNS)
 - Railway → project → **Settings** → **Domains** → **Custom Domain**
 - Enter `dash.faerberfitness.com` → Railway shows a CNAME target like `xxx.up.railway.app`
-- Go to wherever `faerberfitness.com` DNS is (Cloudflare / GoDaddy / Namecheap)
-- Add a CNAME record:
-  - Host/Name: `dash`
-  - Value/Target: `xxx.up.railway.app` (whatever Railway shows)
-  - TTL: default (300s / 5min is fine)
-  - **Cloudflare only**: turn OFF the orange proxy cloud (grey cloud = DNS only). Railway handles SSL termination itself.
+- Copy that CNAME target.
+
+**GHL DNS steps:**
+- Log in to GoHighLevel
+- **Settings** → **Domains** → find `faerberfitness.com`
+- Click into the domain → **DNS Records** tab
+- **Add Record** → **CNAME**:
+  - **Host / Name / Subdomain**: `dash`
+  - **Value / Points to**: `xxx.up.railway.app` (what Railway showed you)
+  - **TTL**: `300` (or default)
+- Save.
+
+(If `faerberfitness.com` isn't managed under Domains in GHL — it may live under Locations → your sub-account → Settings → Domains. Same CNAME steps either way.)
 
 ### 8. Wait for DNS propagation
 - Usually 5–30 min. Sometimes an hour on slow registrars.
@@ -199,9 +197,9 @@ Fallback: Railway → project → Settings → **Build** → change builder from
 - To see the list, search `server/server.js` for `guardLocalOnly` — every guarded route is documented.
 
 ### Custom domain shows "not found" or SSL error
-- DNS hasn't propagated. Wait longer.
+- DNS hasn't propagated. Wait longer (up to 30 min on GHL).
 - CNAME target typo. Double-check against what Railway shows in Domains.
-- Cloudflare: proxy is ON (orange cloud). Turn it OFF — grey cloud only. Railway handles SSL.
+- GHL DNS: confirm the CNAME saved. Search `dash.faerberfitness.com` on https://dnschecker.org/#CNAME/dash.faerberfitness.com to verify.
 
 ### stage-overrides.json resets on every deploy
 - Expected — Railway containers are ephemeral. Migrate that data to Supabase before it starts mattering. Currently `{}` so no data loss.
