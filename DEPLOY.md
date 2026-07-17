@@ -96,6 +96,18 @@ STRIPE_SK_PANDADOC
 STRIPE_SK_AFFIRM
 LOCAL_ONLY=false
 NODE_ENV=production
+
+# Dashboard basic auth — REQUIRED in cloud (otherwise anyone with the URL
+# can see client health data + revenue). /api/health stays public.
+DASHBOARD_USER=zach
+DASHBOARD_PASSWORD=<generate a long random string — 32+ chars>
+```
+
+To generate a strong password locally:
+```bash
+openssl rand -base64 32
+# or
+node -e "console.log(require('crypto').randomBytes(24).toString('base64url'))"
 ```
 
 Optional (only if you use them):
@@ -159,6 +171,32 @@ Confirm:
 - Dashboard loads
 - Sales / P&L / Team tabs pull data
 - No 502s in the browser console
+
+---
+
+## Cloud cron jobs
+
+The cloud server auto-runs 4 sync scripts on schedule (in-process via
+`node-cron`, defined in `server/v2/cron.js`). They fire automatically
+whenever the cloud instance is running — no separate service required:
+
+| Schedule (UTC) | Script                    | Purpose                                    |
+| -------------- | ------------------------- | ------------------------------------------ |
+| 05:00 daily    | `sync-ads-daily.mjs`      | Meta ads → `ad_metrics`                    |
+| 05:15 daily    | `sync-programmed-to.mjs`  | Monday Coach Board → `clients.programmed_to` |
+| 05:30 daily    | `sync-assigned-coach.mjs` | Monday Clients Board → `clients.assigned_coach` |
+| every 4 hours  | `alerts-monitor.mjs`      | Slack alerts (critical resigns, capacity, EOD) |
+
+**Local Mac wrapper:** launchd already runs these locally. When
+`LOCAL_ONLY=true`, the cloud cron self-disables so nothing double-fires.
+
+**One caveat:** `alerts-monitor.mjs` also checks `~/Downloads` for new
+bloodwork PDFs — that alert cleanly no-ops in the cloud (directory doesn't
+exist). The other 3 alerts (critical resigns, coach overloaded, missed EOD)
+work fine in the cloud since they read Supabase.
+
+**Verify crons ran:** Railway → Deployments → View Logs → look for lines like
+`[cron 2026-...] running sync-ads-daily.mjs` and `[cron ...] sync-ads-daily.mjs exited 0`.
 
 ---
 

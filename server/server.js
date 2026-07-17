@@ -16,6 +16,7 @@ import { generateGoalToDos } from './goal-sync.js';
 import { processIntakeSubmission } from './intake.js';
 import { pushApprovedOnboarding } from './onboard-push.js';
 import { registerV2Routes } from './v2/routes.js';
+import { startCronJobs } from './v2/cron.js';
 
 // Env loading:
 //   - Cloud (Railway/Docker): env vars are injected by the host — dotenv is a no-op.
@@ -77,9 +78,45 @@ app.use(express.json({ limit: '2mb' }));
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') return res.sendStatus(200);
   next();
+});
+
+// ─── Basic Auth (production gate) ────────────────────────────────
+// Protects the entire surface except /api/health (Railway's healthcheck
+// hits that endpoint and cannot pass an Authorization header).
+// Skip entirely if DASHBOARD_PASSWORD isn't set — enables frictionless
+// local dev (server binds to localhost only anyway).
+app.use((req, res, next) => {
+  if (req.path === '/api/health') return next();
+  if (!process.env.DASHBOARD_PASSWORD) return next();
+
+  const auth = req.headers.authorization || '';
+  const [scheme, encoded] = auth.split(' ');
+  if (scheme !== 'Basic' || !encoded) {
+    res.set('WWW-Authenticate', 'Basic realm="Faerber Client OS"');
+    return res.status(401).send('Auth required');
+  }
+
+  let decoded = '';
+  try {
+    decoded = Buffer.from(encoded, 'base64').toString('utf8');
+  } catch (_) {
+    res.set('WWW-Authenticate', 'Basic realm="Faerber Client OS"');
+    return res.status(401).send('Bad credentials encoding');
+  }
+
+  const idx = decoded.indexOf(':');
+  const user = idx >= 0 ? decoded.slice(0, idx) : decoded;
+  const pass = idx >= 0 ? decoded.slice(idx + 1) : '';
+  const expectedUser = process.env.DASHBOARD_USER || 'zach';
+  if (user === expectedUser && pass === process.env.DASHBOARD_PASSWORD) {
+    return next();
+  }
+
+  res.set('WWW-Authenticate', 'Basic realm="Faerber Client OS"');
+  return res.status(401).send('Wrong password');
 });
 
 // ─── v2 dashboard shell ──────────────────────────────────────────
@@ -1559,6 +1596,8 @@ const server = app.listen(PORT, HOST, () => {
   pollIntakeSubmissions();
   setInterval(pollIntakeSubmissions, 60000);
   console.log(`   Intake poller: every 60s`);
+  // Start cloud cron jobs (no-op locally when LOCAL_ONLY=true — launchd handles it)
+  startCronJobs();
 });
 
 // Graceful shutdown so Railway / Docker can restart cleanly without dropping in-flight requests.

@@ -13,6 +13,7 @@
     "express": "^4.19.0",
     "formdata-node": "^6.0.3",
     "iceberg-js": "^1.0.0",
+    "node-cron": "^3.0.3",
     "pdfkit": "^0.19.1",
     "playwright": "^1.60.0"
   }
