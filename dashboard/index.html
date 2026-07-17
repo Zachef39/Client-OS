@@ -1,0 +1,3216 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Faerber Client OS</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'] },
+          colors: {
+            flag: { green: '#10b981', yellow: '#f59e0b', red: '#ef4444', onboarding: '#3b82f6', ghosting: '#64748b', no_data: '#64748b' },
+            ink: {
+              900: '#0f172a', 700: '#334155', 500: '#64748b',
+              400: '#94a3b8', 200: '#e2e8f0', 100: '#f1f5f9', 50: '#f8fafc',
+            },
+          },
+        },
+      },
+    };
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Inter', system-ui, sans-serif; }
+    .tab-btn { color: #64748b; border-bottom: 2px solid transparent; transition: all 150ms ease; }
+    .tab-btn:hover { color: #0f172a; }
+    .tab-active { color: #0f172a !important; border-bottom-color: #0f172a !important; }
+    /* Heatmap polish */
+    .heatmap-table { border-spacing: 2px; border-collapse: separate; }
+    .heatmap-cell { width: 18px; height: 18px; border-radius: 4px; transition: transform 80ms ease; }
+    .heatmap-cell:hover { transform: scale(1.4); cursor: pointer; }
+    .heatmap-name { padding-right: 12px; padding-left: 4px; min-width: 160px; font-size: 12px; }
+    .heatmap-name:hover { background: #f8fafc; cursor: pointer; }
+    .mover-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 8px; border-radius: 6px; }
+    .mover-row:hover { background: #f8fafc; }
+    .mover-chip { font-size: 10px; padding: 2px 6px; border-radius: 999px; font-weight: 600; }
+    .mover-up   { background: #ecfdf5; color: #047857; }
+    .mover-down { background: #fef2f2; color: #b91c1c; }
+    .traj-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .traj-table thead th { text-align: left; padding: 8px 10px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: #94a3b8; font-weight: 600; background: #f8fafc; border-bottom: 1px solid #e2e8f0; }
+    .traj-table tbody tr { border-bottom: 1px solid #f1f5f9; transition: background 100ms; }
+    .traj-table tbody tr:hover { background: #f8fafc; }
+    .traj-table td { padding: 10px 10px; }
+    .progress-bar { height: 6px; background: #f1f5f9; border-radius: 3px; overflow: hidden; min-width: 80px; }
+    .progress-fill { height: 100%; background: linear-gradient(90deg, #10b981, #059669); transition: width 300ms ease; }
+    .pace-badge { font-size: 10px; padding: 2px 8px; border-radius: 999px; font-weight: 600; }
+    .pace-on  { background: #ecfdf5; color: #047857; }
+    .pace-off { background: #fffbeb; color: #b45309; }
+    .flag-bar-green       { background: linear-gradient(90deg, #10b981, #059669); }
+    .flag-bar-yellow      { background: linear-gradient(90deg, #f59e0b, #d97706); }
+    .flag-bar-red         { background: linear-gradient(90deg, #ef4444, #b91c1c); }
+    .flag-bar-onboarding  { background: linear-gradient(90deg, #3b82f6, #1d4ed8); }
+    .flag-bar-ghosting    { background: linear-gradient(90deg, #64748b, #334155); }
+    .flag-bar-no_data     { background: linear-gradient(90deg, #64748b, #334155); }
+    .tile {
+      background: white; border: 1px solid #e2e8f0; border-radius: 12px;
+      overflow: hidden; transition: all 150ms ease;
+      display: flex; flex-direction: column;
+    }
+    .tile:hover { transform: translateY(-2px); box-shadow: 0 8px 20px -6px rgba(15, 23, 42, 0.12); border-color: #cbd5e1; }
+    .pill {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600;
+    }
+
+    /* ── Stage list (table) view ─────────────────────────── */
+    .stage-section { background: white; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; }
+    .stage-header {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 16px; cursor: pointer; user-select: none;
+      background: #fbfaf8; border-bottom: 1px solid #e2e8f0;
+      transition: background 120ms ease;
+    }
+    .stage-header:hover { background: #f4f1ec; }
+    .stage-section.collapsed .stage-header { border-bottom: none; }
+    .stage-section.collapsed .stage-body { display: none; }
+    .stage-dot {
+      display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .stage-dot-red        { background: #ef4444; }
+    .stage-dot-yellow     { background: #f59e0b; }
+    .stage-dot-green      { background: #10b981; }
+    .stage-dot-onboarding { background: #3b82f6; }
+    .stage-dot-ghosting   { background: #64748b; }
+    .stage-dot-past       { background: #94a3b8; }
+    .stage-chev {
+      margin-left: auto; transition: transform 150ms ease;
+      color: #94a3b8; font-size: 12px;
+    }
+    .stage-section.collapsed .stage-chev { transform: rotate(-90deg); }
+    .stage-count {
+      background: #f1f5f9; color: #334155; font-size: 11px; font-weight: 700;
+      padding: 2px 8px; border-radius: 999px;
+    }
+    .stage-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .stage-table thead th {
+      text-align: left; padding: 8px 12px; font-size: 10px;
+      text-transform: uppercase; letter-spacing: 0.04em; color: #94a3b8;
+      font-weight: 600; background: #f8fafc; border-bottom: 1px solid #e2e8f0;
+      white-space: nowrap;
+    }
+    .stage-table tbody tr {
+      cursor: pointer; transition: background 100ms ease;
+      border-bottom: 1px solid #f1f5f9;
+    }
+    .stage-table tbody tr:last-child { border-bottom: none; }
+    .stage-table tbody tr:nth-child(even) { background: #fcfbf9; }
+    .stage-table tbody tr:hover { background: #f4f1ec; }
+    .stage-table td {
+      padding: 9px 12px; height: 36px; white-space: nowrap;
+      color: #334155;
+    }
+    .stage-table td.name-cell { color: #0f172a; font-weight: 600; }
+    .stage-table td.delta-good { color: #047857; font-weight: 600; }
+    .stage-table td.delta-bad { color: #b91c1c; font-weight: 600; }
+    .stage-table td.trend-good { color: #047857; font-weight: 600; }
+    .stage-table td.trend-bad  { color: #b91c1c; font-weight: 700; }
+    .stage-table td.trend-flat { color: #94a3b8; }
+    .stage-table td.muted { color: #94a3b8; }
+    .override-tag {
+      margin-left: 6px; font-size: 9px; font-weight: 700;
+      letter-spacing: 0.05em; color: #c18b9d;
+      background: rgba(193, 139, 157, 0.12);
+      padding: 1px 5px; border-radius: 4px;
+    }
+
+    /* Right-click context menu */
+    .ctx-menu {
+      position: absolute; z-index: 100;
+      background: white; border: 1px solid #e2e8f0;
+      border-radius: 8px; box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.2);
+      padding: 4px; min-width: 180px;
+    }
+    .ctx-menu-header {
+      padding: 6px 10px 4px; font-size: 10px;
+      text-transform: uppercase; letter-spacing: 0.05em;
+      color: #94a3b8; font-weight: 700;
+    }
+    .ctx-menu-item {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 10px; font-size: 13px; cursor: pointer;
+      border-radius: 4px; color: #334155;
+    }
+    .ctx-menu-item:hover { background: #f1f5f9; color: #0f172a; }
+    .ctx-menu-divider { height: 1px; background: #e2e8f0; margin: 4px 0; }
+
+    /* ── Multi-select checkboxes ───────────────────────────── */
+    .row-check, .section-check, #masterSelectAll {
+      width: 16px; height: 16px;
+      accent-color: #c18b9d;
+      cursor: pointer;
+      margin: 0;
+      vertical-align: middle;
+    }
+    .stage-table th.check-col,
+    .stage-table td.check-col {
+      width: 36px;
+      padding: 8px 0 8px 12px;
+      text-align: center;
+    }
+    .stage-table tbody tr.row-selected { background: #f6ecf0 !important; }
+
+    /* Master "select all" toggle row */
+    .master-select-row {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 4px 0; font-size: 12px; color: #64748b;
+      user-select: none;
+    }
+    .master-select-row label { cursor: pointer; }
+
+    /* ── Floating bulk-action bar ───────────────────────────── */
+    .bulk-bar {
+      position: fixed;
+      bottom: 16px; left: 50%;
+      transform: translateX(-50%);
+      z-index: 50;
+      background: white;
+      border: 1px solid #e2e8f0;
+      border-radius: 999px;
+      box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.18);
+      padding: 8px 16px;
+      display: none;
+      align-items: center;
+      gap: 10px;
+      font-size: 13px;
+    }
+    .bulk-bar.visible { display: flex; }
+    .bulk-bar .bulk-count {
+      font-weight: 700; color: #0f172a;
+      padding-right: 4px;
+    }
+    .bulk-bar .bulk-label {
+      color: #64748b; font-size: 12px; font-weight: 600;
+      letter-spacing: 0.02em; text-transform: uppercase;
+    }
+    .bulk-bar button.bulk-stage-btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 10px; border-radius: 999px;
+      background: #fbfaf8; border: 1px solid #e2e8f0;
+      color: #334155; font-size: 12px; font-weight: 600;
+      cursor: pointer;
+      transition: background 100ms ease, border-color 100ms ease;
+    }
+    .bulk-bar button.bulk-stage-btn:hover {
+      background: #f4f1ec; border-color: #c18b9d;
+    }
+    .bulk-bar button.bulk-stage-btn.bulk-clear {
+      background: transparent; border: none; color: #64748b;
+      padding: 6px 8px;
+    }
+    .bulk-bar button.bulk-stage-btn.bulk-clear:hover {
+      color: #c18b9d;
+    }
+    .bulk-bar .bulk-divider {
+      width: 1px; height: 18px; background: #e2e8f0;
+    }
+  </style>
+</head>
+<body class="bg-ink-50 text-ink-900 antialiased">
+
+  <!-- HEADER -->
+  <header class="bg-white border-b border-ink-200 sticky top-0 z-10">
+    <div class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+      <div>
+        <div class="text-xs text-ink-400 font-medium tracking-wider">FAERBER CLIENT OS</div>
+        <h1 class="text-xl font-bold tracking-tight">Active Clients</h1>
+      </div>
+      <div class="flex items-center gap-4">
+        <div class="text-right text-xs text-ink-500">
+          <div>Last synced</div>
+          <div id="lastSynced" class="font-semibold text-ink-700">—</div>
+        </div>
+        <!-- Action Queue legacy button hidden — merged into To-Do. Kept invisible to avoid breaking existing JS refs. -->
+        <button id="actionQueueBtn" class="hidden">
+          <span id="actionQueueCount">0</span>
+        </button>
+        <button id="onboardingsBtn" class="bg-gradient-to-r from-violet-600 to-indigo-600 text-white text-sm font-semibold px-3 py-2 rounded-lg hover:from-violet-700 hover:to-indigo-700 transition flex items-center gap-2 shadow-sm">
+          <span>🆕</span>
+          <span>New Clients</span>
+          <span id="onboardingsCount" class="bg-white text-violet-700 text-xs font-bold px-1.5 rounded-full">0</span>
+        </button>
+        <button id="todoListBtn" class="bg-rose-600 text-white text-sm font-semibold px-3 py-2 rounded-lg hover:bg-rose-700 transition flex items-center gap-2">
+          <span>✓</span>
+          <span>To-Do</span>
+          <span id="todoListCount" class="bg-white text-rose-700 text-xs font-bold px-1.5 rounded-full">0</span>
+        </button>
+        <button id="checkinBtn" class="bg-emerald-600 text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-emerald-700 transition flex items-center gap-2">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>
+          <span>Begin Check-in</span>
+        </button>
+        <button id="syncBtn" class="bg-ink-900 text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-ink-700 transition flex items-center gap-2">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+          <span id="syncBtnLabel">Sync now</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- CHECK-IN TRIAGE VIEW (full-screen overlay) -->
+  <div id="triageView" class="hidden fixed inset-0 bg-ink-50 z-40 overflow-y-auto">
+    <header class="bg-white border-b border-ink-200 sticky top-0 z-10">
+      <div class="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
+        <div>
+          <div class="text-xs text-ink-400 font-medium tracking-wider">TUESDAY TRIAGE</div>
+          <h1 class="text-xl font-bold tracking-tight">
+            <span id="triageProgress">—</span>
+            <span id="triageDate" class="text-sm font-normal text-ink-500 ml-3">—</span>
+          </h1>
+        </div>
+        <div class="flex items-center gap-3">
+          <label class="flex items-center gap-2 text-xs text-ink-600 cursor-pointer">
+            <input type="checkbox" id="triageHideSent" checked class="rounded">
+            Hide sent
+          </label>
+          <span id="triageSentCount" class="text-xs text-ink-500">—</span>
+          <button id="triagePrev" class="px-3 py-2 text-sm font-semibold text-ink-700 hover:bg-ink-100 rounded-lg">← Prev</button>
+          <button id="triageSkip" class="px-3 py-2 text-sm font-semibold text-ink-700 hover:bg-ink-100 rounded-lg">Skip →</button>
+          <button id="triageFinish" class="px-3 py-2 text-sm font-semibold bg-amber-500 text-white hover:bg-amber-600 rounded-lg">Finish Session</button>
+          <button id="triageClose" class="px-3 py-2 text-sm font-semibold text-ink-700 hover:bg-ink-100 rounded-lg">Close</button>
+        </div>
+      </div>
+    </header>
+
+    <div id="triageBody" class="max-w-6xl mx-auto px-6 py-6">
+      <div id="triageLoading" class="text-center py-16 text-ink-400">
+        <div class="inline-block w-8 h-8 border-2 border-ink-200 border-t-ink-700 rounded-full animate-spin"></div>
+        <div class="mt-3 text-sm">Loading check-ins...</div>
+      </div>
+
+      <div id="triageEmpty" class="hidden text-center py-20">
+        <div class="text-2xl mb-2">📭</div>
+        <div class="text-ink-500 mb-4">No check-ins for today yet.</div>
+        <button id="triageRunScrape" class="bg-ink-900 text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-ink-700">Run Scrape</button>
+        <pre id="triageScrapeLog" class="hidden mt-4 bg-ink-900 text-emerald-300 text-[11px] p-3 rounded-lg text-left max-h-64 overflow-y-auto whitespace-pre-wrap"></pre>
+      </div>
+
+      <div id="triageClient" class="hidden">
+        <!-- Header w/ name + flag -->
+        <div class="bg-white border border-ink-200 rounded-xl mb-4">
+          <div id="triageFlagBar" class="h-1.5 rounded-t-xl"></div>
+          <div class="p-5 flex items-start justify-between gap-4">
+            <div>
+              <div class="flex items-center gap-3 flex-wrap">
+                <h2 id="triageName" class="text-2xl font-bold">—</h2>
+                <span id="triageFlagPill" class="pill"></span>
+                <span id="triageSentBadge" class="hidden pill bg-emerald-100 text-emerald-700 border border-emerald-300">✓ Sent</span>
+              </div>
+              <div id="triageMeta" class="text-sm text-ink-500 mt-1">—</div>
+              <div id="triageReasons" class="text-xs text-ink-400 italic mt-2"></div>
+            </div>
+            <div class="grid grid-cols-4 gap-3 text-center">
+              <div><div class="text-[10px] text-ink-400 uppercase tracking-wider">Workouts</div><div id="statWO" class="text-lg font-bold">—</div></div>
+              <div><div class="text-[10px] text-ink-400 uppercase tracking-wider">Logged</div><div id="statLog" class="text-lg font-bold">—</div></div>
+              <div><div class="text-[10px] text-ink-400 uppercase tracking-wider">Protein</div><div id="statProt" class="text-lg font-bold">—</div></div>
+              <div><div class="text-[10px] text-ink-400 uppercase tracking-wider">Cal</div><div id="statCal" class="text-lg font-bold">—</div></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <!-- LEFT: Their answers + recs -->
+          <div class="space-y-4">
+            <div class="bg-white border border-ink-200 rounded-xl p-5">
+              <h3 class="text-sm font-bold text-ink-700 uppercase tracking-wider mb-3">Their Check-in Answers</h3>
+              <div id="triageAnswers" class="space-y-3 text-sm text-ink-700">—</div>
+            </div>
+
+            <div class="bg-white border border-ink-200 rounded-xl p-5">
+              <h3 class="text-sm font-bold text-ink-700 uppercase tracking-wider mb-3">Current Recommendations</h3>
+              <div id="triageRecs" class="space-y-2 text-sm">—</div>
+            </div>
+          </div>
+
+          <!-- RIGHT: Drafted response + actions -->
+          <div class="space-y-4">
+            <div class="bg-white border border-ink-200 rounded-xl p-5">
+              <div class="flex items-center justify-between mb-3">
+                <h3 class="text-sm font-bold text-ink-700 uppercase tracking-wider">Drafted Response</h3>
+                <span id="triageSaveStatus" class="text-xs text-ink-400">—</span>
+              </div>
+              <textarea id="triageResponse" rows="20"
+                class="w-full text-sm font-mono p-3 border border-ink-200 rounded-lg focus:outline-none focus:border-ink-400 resize-y"
+                style="min-height: 420px;"></textarea>
+              <p class="text-[11px] text-ink-400 mt-2">*** footer is coach-only and will be stripped before sending.</p>
+            </div>
+
+            <div class="bg-white border border-ink-200 rounded-xl p-5">
+              <h3 class="text-sm font-bold text-ink-700 uppercase tracking-wider mb-2">Notes for Rewrite</h3>
+              <p class="text-[11px] text-ink-400 mb-2">Anything specific you want addressed — Claude will rewrite using the recommendations + your notes, in your voice.</p>
+              <textarea id="triageNotes" rows="3"
+                class="w-full text-sm p-3 border border-ink-200 rounded-lg focus:outline-none focus:border-ink-400 resize-y mb-2"
+                placeholder="e.g. Push harder on protein this week, mention her trip next weekend, acknowledge her knee pain..."></textarea>
+              <button id="triageRewriteBtn" class="w-full bg-indigo-600 text-white text-sm font-semibold px-4 py-2.5 rounded-lg hover:bg-indigo-700">
+                ✨ Regenerate with recommendations + notes
+              </button>
+              <div id="triageRewriteStatus" class="hidden text-xs text-ink-500 mt-2"></div>
+            </div>
+
+            <div class="flex gap-2">
+              <button id="triageSendBtn" class="flex-1 bg-emerald-600 text-white text-sm font-semibold px-4 py-3 rounded-lg hover:bg-emerald-700">
+                ✓ Send & Next
+              </button>
+              <button id="triageSaveBtn" class="bg-white border border-ink-200 text-ink-700 text-sm font-semibold px-4 py-3 rounded-lg hover:bg-ink-100">
+                💾 Save only
+              </button>
+            </div>
+
+            <div id="triageSendLog" class="hidden bg-ink-900 text-emerald-300 text-[11px] p-3 rounded-lg max-h-32 overflow-y-auto whitespace-pre-wrap font-mono"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- NUDGE REVIEW MODAL -->
+  <div id="nudgeModal" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-xl max-w-3xl w-full max-h-[90vh] flex flex-col shadow-2xl">
+      <div class="px-6 py-4 border-b border-ink-200 flex items-center justify-between">
+        <div>
+          <h2 class="text-lg font-bold">📣 Review Nudges</h2>
+          <p class="text-xs text-ink-500 mt-0.5">Edit any draft before sending. Drafted in your voice from each client's recent data.</p>
+        </div>
+        <button id="nudgeClose" class="text-ink-400 hover:text-ink-900 text-xl">&times;</button>
+      </div>
+      <div id="nudgeBody" class="px-6 py-4 overflow-y-auto flex-1 space-y-3">
+        <div class="text-ink-400 text-sm">Drafting messages...</div>
+      </div>
+      <div class="px-6 py-3 border-t border-ink-200 flex items-center justify-between bg-ink-50">
+        <span class="text-xs text-ink-500"><span id="nudgeCount">0</span> messages ready</span>
+        <div class="flex gap-2">
+          <button id="nudgeCancel" class="text-sm bg-white border border-ink-300 text-ink-700 px-4 py-2 rounded hover:bg-ink-100">Cancel</button>
+          <button id="nudgeSendAll" class="text-sm bg-emerald-600 text-white px-4 py-2 rounded font-semibold hover:bg-emerald-700 disabled:opacity-30" disabled>Send all</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB NAVIGATION -->
+  <div class="max-w-7xl mx-auto px-6 pt-4">
+    <div class="flex gap-1 border-b border-ink-200">
+      <button data-tab="macro"    class="tab-btn tab-active px-4 py-2 text-sm font-semibold">📊 Macro View</button>
+      <button data-tab="trajectory" class="tab-btn px-4 py-2 text-sm font-semibold">🎯 Goal Trajectory</button>
+      <button data-tab="clients"  class="tab-btn px-4 py-2 text-sm font-semibold">👥 Active Clients</button>
+    </div>
+  </div>
+
+  <!-- BATCH ACTIONS BAR -->
+  <div class="max-w-7xl mx-auto px-6 pt-3">
+    <div class="bg-gradient-to-r from-ink-900 to-slate-800 text-white rounded-xl p-3 flex items-center justify-between flex-wrap gap-3 shadow-sm">
+      <div class="flex items-center gap-3">
+        <span class="text-xs font-bold uppercase tracking-wide text-ink-300">Batch Actions</span>
+        <span class="text-[11px] text-ink-400 bg-ink-700 px-2 py-0.5 rounded-full">Selected: <span id="batchCount" class="font-bold text-white">0</span></span>
+      </div>
+      <div class="flex gap-2 flex-wrap">
+        <button id="batchSelectAll" class="text-xs bg-ink-700 text-white px-3 py-1.5 rounded hover:bg-ink-600">Select all</button>
+        <button id="batchClear" class="text-xs bg-ink-700 text-white px-3 py-1.5 rounded hover:bg-ink-600">Clear</button>
+        <button id="batchMealPlans" class="text-xs bg-emerald-600 text-white px-3 py-1.5 rounded hover:bg-emerald-700 disabled:opacity-30 font-semibold" disabled>🍽️ Regenerate meal plans</button>
+        <button id="batchNudge" class="text-xs bg-amber-500 text-white px-3 py-1.5 rounded hover:bg-amber-600 disabled:opacity-30 font-semibold" disabled>📣 Send nudge</button>
+      </div>
+    </div>
+    <div id="batchLog" class="hidden bg-ink-900 text-emerald-300 text-[11px] p-3 rounded-lg mt-2 max-h-40 overflow-y-auto whitespace-pre-wrap font-mono"></div>
+  </div>
+
+  <!-- TAB: MACRO VIEW -->
+  <div class="tab-content max-w-7xl mx-auto px-6 pt-5" data-tab-content="macro">
+    <!-- HEATMAP -->
+    <div class="bg-white border border-ink-200 rounded-xl p-5 shadow-sm mb-4">
+      <div class="flex items-center justify-between mb-3">
+        <div>
+          <h3 class="text-base font-bold">📊 14-Day Compliance Heatmap</h3>
+          <p class="text-xs text-ink-500 mt-0.5">Each cell = 1 day. Green = on track, Yellow = slipping, Red = needs touch.</p>
+        </div>
+        <div class="flex items-center gap-3 text-[10px]">
+          <span class="text-ink-400" id="heatmapCount">—</span>
+          <div class="flex items-center gap-1.5">
+            <span class="w-2.5 h-2.5 rounded-full" style="background:#10b981"></span><span>Green</span>
+            <span class="w-2.5 h-2.5 rounded-full ml-2" style="background:#f59e0b"></span><span>Yellow</span>
+            <span class="w-2.5 h-2.5 rounded-full ml-2" style="background:#ef4444"></span><span>Red</span>
+            <span class="w-2.5 h-2.5 rounded-full ml-2" style="background:#3b82f6"></span><span>Onboard</span>
+          </div>
+        </div>
+      </div>
+      <div id="heatmapGrid" class="text-xs overflow-x-auto"></div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <!-- MOVERS -->
+      <div class="bg-white border border-ink-200 rounded-xl p-5 shadow-sm">
+        <h3 class="text-base font-bold mb-1">📈 Movers · last 7d vs prior 7d</h3>
+        <p class="text-xs text-ink-500 mb-3">Based on workout completion + days logged</p>
+        <div id="moversPanel" class="space-y-3"><div class="text-ink-400 text-xs">Loading…</div></div>
+      </div>
+
+      <!-- STUCK LIST -->
+      <div class="bg-white border border-ink-200 rounded-xl p-5 shadow-sm">
+        <h3 class="text-base font-bold mb-1">🔁 Stuck Clients</h3>
+        <p class="text-xs text-ink-500 mb-3">Flat scale 21+ days but compliance is green — needs macro audit</p>
+        <div id="stuckPanel" class="space-y-1.5 text-xs"><div class="text-ink-400">Loading…</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB: GOAL TRAJECTORY -->
+  <div class="tab-content hidden max-w-7xl mx-auto px-6 pt-5" data-tab-content="trajectory">
+    <div class="bg-white border border-ink-200 rounded-xl p-5 shadow-sm">
+      <div class="flex items-center justify-between mb-3">
+        <div>
+          <h3 class="text-base font-bold">🎯 Goal Trajectory</h3>
+          <p class="text-xs text-ink-500 mt-0.5">Projected hit date based on recent weigh-in rate. On-pace clients in green.</p>
+        </div>
+        <button id="refreshTrajectoryBtn" class="text-xs bg-ink-100 text-ink-700 px-3 py-1.5 rounded hover:bg-ink-200">🔄 Refresh</button>
+      </div>
+      <div id="trajectoryPanel" class="overflow-x-auto"><div class="text-ink-400 text-xs">Loading…</div></div>
+    </div>
+  </div>
+
+  <!-- TAB: ACTIVE CLIENTS — existing render goes inside this -->
+  <div class="tab-content hidden" data-tab-content="clients">
+    <!-- Existing client list lives below in the main content area. We just toggle visibility. -->
+  </div>
+
+  <!-- FILTERS -->
+  <div class="max-w-7xl mx-auto px-6 py-5">
+    <div class="flex items-center justify-between flex-wrap gap-3 mb-4">
+      <div class="flex gap-2 flex-wrap" id="filterChips">
+        <button data-flag="all"        class="filter-chip pill bg-ink-900 text-white">All <span class="ml-1 opacity-70" id="countAll">—</span></button>
+        <button data-flag="onboarding" class="filter-chip pill bg-white border border-ink-200 text-ink-700"><span class="w-2 h-2 rounded-full bg-flag-onboarding inline-block"></span> Onboarding <span class="ml-1 text-ink-400" id="countOnboarding">—</span></button>
+        <button data-flag="red"        class="filter-chip pill bg-white border border-ink-200 text-ink-700"><span class="w-2 h-2 rounded-full bg-flag-red inline-block"></span> Red <span class="ml-1 text-ink-400" id="countRed">—</span></button>
+        <button data-flag="yellow"     class="filter-chip pill bg-white border border-ink-200 text-ink-700"><span class="w-2 h-2 rounded-full bg-flag-yellow inline-block"></span> Yellow <span class="ml-1 text-ink-400" id="countYellow">—</span></button>
+        <button data-flag="green"      class="filter-chip pill bg-white border border-ink-200 text-ink-700"><span class="w-2 h-2 rounded-full bg-flag-green inline-block"></span> Green <span class="ml-1 text-ink-400" id="countGreen">—</span></button>
+        <button data-flag="ghosting"   class="filter-chip pill bg-white border border-ink-200 text-ink-700"><span class="w-2 h-2 rounded-full bg-flag-ghosting inline-block"></span> Ghosting <span class="ml-1 text-ink-400" id="countGhosting">—</span></button>
+        <span class="mx-2 text-ink-300">|</span>
+        <button data-flag="past" class="filter-chip pill bg-white border border-ink-200 text-ink-700">🗂 Past <span class="ml-1 text-ink-400" id="countPast">—</span></button>
+      </div>
+      <input id="search" type="text" placeholder="Search clients..."
+        class="px-3 py-2 border border-ink-200 rounded-lg text-sm w-64 focus:outline-none focus:border-ink-400">
+    </div>
+
+    <!-- GRID -->
+    <div id="loading" class="text-center py-16 text-ink-400">
+      <div class="inline-block w-8 h-8 border-2 border-ink-200 border-t-ink-700 rounded-full animate-spin"></div>
+      <div class="mt-3 text-sm">Loading clients...</div>
+    </div>
+
+    <div class="master-select-row">
+      <input type="checkbox" id="masterSelectAll" aria-label="Select all clients">
+      <label for="masterSelectAll">Select all visible</label>
+    </div>
+
+    <div id="grid" class="hidden space-y-3"></div>
+    <div id="empty" class="hidden text-center py-16 text-ink-400 text-sm">No clients match the filter.</div>
+  </div>
+
+  <!-- Floating bulk-action bar -->
+  <div id="bulkBar" class="bulk-bar" role="region" aria-label="Bulk actions">
+    <span class="bulk-count"><span id="bulkCount">0</span> selected</span>
+    <span class="bulk-divider"></span>
+    <span class="bulk-label">Move to</span>
+    <button type="button" class="bulk-stage-btn" data-bulk-stage="onboarding"><span class="stage-dot stage-dot-onboarding"></span>Onboarding</button>
+    <button type="button" class="bulk-stage-btn" data-bulk-stage="red"><span class="stage-dot stage-dot-red"></span>Red</button>
+    <button type="button" class="bulk-stage-btn" data-bulk-stage="yellow"><span class="stage-dot stage-dot-yellow"></span>Yellow</button>
+    <button type="button" class="bulk-stage-btn" data-bulk-stage="green"><span class="stage-dot stage-dot-green"></span>Green</button>
+    <button type="button" class="bulk-stage-btn" data-bulk-stage="ghosting"><span class="stage-dot stage-dot-ghosting"></span>Ghosting</button>
+    <button type="button" class="bulk-stage-btn" data-bulk-stage="past"><span class="stage-dot stage-dot-past"></span>Past</button>
+    <button type="button" class="bulk-stage-btn" data-bulk-stage="__auto__">Auto</button>
+    <span class="bulk-divider"></span>
+    <button type="button" class="bulk-stage-btn bulk-clear" id="bulkClearBtn">Clear</button>
+  </div>
+
+  <!-- Right-click stage override menu (positioned dynamically) -->
+  <div id="stageContextMenu" class="ctx-menu hidden"></div>
+
+  <!-- END-OF-SESSION TO-DO REPORT -->
+  <div id="todoReportModal" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-4xl w-full max-h-[90vh] flex flex-col">
+      <div class="p-6 border-b border-ink-200 flex items-center justify-between">
+        <div>
+          <h2 class="text-xl font-bold">✅ Triage Complete — This Week's To-Do List</h2>
+          <p id="todoReportSummary" class="text-xs text-ink-500 mt-1">—</p>
+        </div>
+        <div class="flex gap-2">
+          <button id="todoCopyAll" class="text-xs font-semibold bg-ink-900 text-white px-3 py-2 rounded-lg hover:bg-ink-700">📋 Copy all as markdown</button>
+          <button id="closeTodoReport" class="px-3 py-1 text-sm font-semibold text-ink-700 hover:bg-ink-100 rounded-lg">Close</button>
+        </div>
+      </div>
+      <div id="todoReportBody" class="p-6 overflow-y-auto flex-1 space-y-3">—</div>
+    </div>
+  </div>
+
+  <!-- ACTION QUEUE MODAL -->
+  <div id="actionQueueModal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-3xl w-full max-h-[85vh] flex flex-col">
+      <div class="p-6 border-b border-ink-200 flex items-center justify-between">
+        <div>
+          <h2 class="text-lg font-bold">This Week's Action Queue</h2>
+          <p class="text-xs text-ink-500 mt-1">Resource builds, program adjustments, calls to schedule. Persists in browser.</p>
+        </div>
+        <button id="closeQueueModal" class="px-3 py-1 text-sm font-semibold text-ink-700 hover:bg-ink-100 rounded-lg">Close</button>
+      </div>
+      <div id="actionQueueList" class="p-6 overflow-y-auto flex-1 space-y-3">
+        <div class="text-center text-ink-400 py-8 text-sm">No actions queued yet. Queue items as you triage check-ins.</div>
+      </div>
+      <div class="p-4 border-t border-ink-200 flex justify-between items-center text-xs text-ink-500">
+        <span id="actionQueueSummary">0 items · 0 done</span>
+        <button id="clearDoneBtn" class="text-xs font-semibold text-ink-700 hover:underline">Clear done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- SYNC MODAL -->
+  <div id="syncModal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-2xl w-full p-6">
+      <h2 class="text-lg font-bold mb-2">Run a Sync</h2>
+      <p class="text-sm text-ink-700 mb-4">Fast Sync = Trainerize + FitMetrics data only (~25 sec). Generate Recs = Claude rec pass on top (~3-5 min).</p>
+      <button id="runSync" class="w-full bg-ink-900 text-white text-sm font-semibold px-4 py-3 rounded-lg hover:bg-ink-700 mb-2">▶ Fast Sync (data only, ~25s)</button>
+      <button id="runRecs" class="w-full bg-emerald-700 text-white text-sm font-semibold px-4 py-3 rounded-lg hover:bg-emerald-800 mb-3">🧠 Generate AI Recs (~3-5 min)</button>
+      <pre id="syncLog" class="hidden bg-ink-900 text-emerald-300 text-[11px] p-3 rounded-lg max-h-80 overflow-y-auto whitespace-pre-wrap font-mono"></pre>
+      <div class="flex justify-end gap-2 mt-3">
+        <button id="closeModal" class="px-4 py-2 text-sm font-semibold text-ink-700 hover:bg-ink-100 rounded-lg">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- TO-DO LIST MODAL -->
+  <div id="todoListModal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-3xl w-full max-h-[90vh] flex flex-col">
+      <div class="px-6 py-4 border-b border-ink-200 flex items-center justify-between">
+        <div>
+          <div class="text-xs text-ink-400 font-medium tracking-wider">SOURCE OF TRUTH</div>
+          <h2 class="text-lg font-bold">Coach To-Do List</h2>
+          <div id="todoListSummary" class="text-xs text-ink-500 mt-1">—</div>
+        </div>
+        <button id="closeTodoList" class="text-ink-500 hover:bg-ink-100 px-3 py-2 rounded-lg text-sm font-semibold">Close</button>
+      </div>
+
+      <!-- QUICK-ADD -->
+      <div class="px-6 py-4 border-b border-ink-200 bg-ink-50">
+        <div class="text-xs font-bold text-ink-700 uppercase tracking-wider mb-2">Quick add</div>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-2 mb-2">
+          <select id="todoAddClient" class="text-sm px-3 py-2 border border-ink-200 rounded-lg focus:outline-none focus:border-ink-400">
+            <option value="">— pick a client —</option>
+          </select>
+          <select id="todoAddCategory" class="text-sm px-3 py-2 border border-ink-200 rounded-lg focus:outline-none focus:border-ink-400">
+            <option value="workout">💪 Workout</option>
+            <option value="calorie">🔥 Calories</option>
+            <option value="mealplan">🍽️ Meal plan</option>
+            <option value="call">📞 Call</option>
+            <option value="bloodwork">🩸 Bloodwork</option>
+            <option value="check-in">📝 Check-in</option>
+            <option value="other" selected>✏️ Other</option>
+          </select>
+          <button id="todoAddBtn" class="text-sm font-semibold bg-rose-600 text-white px-3 py-2 rounded-lg hover:bg-rose-700">+ Add to-do</button>
+        </div>
+        <textarea id="todoAddNote" rows="2" class="w-full text-sm px-3 py-2 border border-ink-200 rounded-lg focus:outline-none focus:border-ink-400 resize-y" placeholder="What needs to happen? e.g. 'New workout split — wants more upper body day' or 'Adjust calories down 100'"></textarea>
+        <div class="flex items-center gap-1 mt-2 flex-wrap">
+          <span class="text-[10px] text-ink-500 mr-1">Presets:</span>
+          <button data-todo-preset="workout" class="text-[10px] px-2 py-1 bg-indigo-100 text-indigo-800 rounded hover:bg-indigo-200 border border-indigo-300">💪 Workout</button>
+          <button data-todo-preset="calorie" class="text-[10px] px-2 py-1 bg-amber-100 text-amber-800 rounded hover:bg-amber-200 border border-amber-300">🔥 Calories</button>
+          <button data-todo-preset="mealplan" class="text-[10px] px-2 py-1 bg-emerald-100 text-emerald-800 rounded hover:bg-emerald-200 border border-emerald-300">🍽️ Meal plan</button>
+          <button data-todo-preset="call" class="text-[10px] px-2 py-1 bg-rose-100 text-rose-800 rounded hover:bg-rose-200 border border-rose-300">📞 Call</button>
+          <button data-todo-preset="bloodwork" class="text-[10px] px-2 py-1 bg-red-100 text-red-800 rounded hover:bg-red-200 border border-red-300">🩸 Bloodwork</button>
+          <button data-todo-preset="check-in" class="text-[10px] px-2 py-1 bg-cyan-100 text-cyan-800 rounded hover:bg-cyan-200 border border-cyan-300">📝 Check-in</button>
+          <button data-todo-preset="other" class="text-[10px] px-2 py-1 bg-slate-100 text-slate-800 rounded hover:bg-slate-200 border border-slate-300">✏️ Other</button>
+        </div>
+        <div class="mt-3 pt-3 border-t border-ink-200">
+          <button id="goalSyncBtn" class="text-xs font-semibold bg-gradient-to-r from-violet-600 to-indigo-600 text-white px-3 py-2 rounded-lg hover:from-violet-700 hover:to-indigo-700 flex items-center gap-2 shadow-sm">
+            🎯 Generate recommendations from goals
+            <span class="text-[10px] bg-white/20 px-2 py-0.5 rounded">full roster sync</span>
+          </button>
+          <div id="goalSyncStatus" class="text-[11px] text-ink-500 mt-1 hidden"></div>
+        </div>
+        <div id="todoAddError" class="text-xs text-red-600 mt-1"></div>
+      </div>
+
+      <!-- LIST -->
+      <div id="todoListBody" class="px-6 py-4 overflow-y-auto flex-1">
+        <div class="text-center text-ink-400 py-8 text-sm">Loading…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PENDING ONBOARDINGS MODAL -->
+  <div id="onboardingsModal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-5xl w-full max-h-[92vh] flex flex-col">
+      <div class="px-6 py-4 border-b border-ink-200 flex items-center justify-between">
+        <div>
+          <div class="text-xs text-ink-400 font-medium tracking-wider">AUTO-ONBOARDED</div>
+          <h2 class="text-lg font-bold">Pending New Clients</h2>
+          <div id="onboardingsSummary" class="text-xs text-ink-500 mt-1">—</div>
+        </div>
+        <button id="closeOnboardings" class="text-ink-500 hover:bg-ink-100 px-3 py-2 rounded-lg text-sm font-semibold">Close</button>
+      </div>
+      <div id="onboardingsBody" class="px-6 py-4 overflow-y-auto flex-1 space-y-4">
+        <div class="text-center text-ink-400 py-8 text-sm">Loading…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- POST-APPROVE TO-DO PICKER MODAL -->
+  <div id="postApproveModal" class="hidden fixed inset-0 bg-black/60 z-[70] flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-lg w-full max-h-[90vh] flex flex-col">
+      <div class="px-6 py-4 border-b border-ink-200">
+        <div class="text-xs text-emerald-600 font-bold tracking-wider">✅ APPROVED — PUSH FIRING</div>
+        <h2 class="text-lg font-bold mt-1">What other to-dos for <span id="postApproveClientName">—</span>?</h2>
+        <p class="text-xs text-ink-500 mt-1">Check the boxes for what you need to handle. These land in your To-Do list.</p>
+      </div>
+      <div class="px-6 py-4 overflow-y-auto flex-1 space-y-2" id="postApproveBody">
+        <!-- Checkboxes populated dynamically -->
+      </div>
+      <div class="px-6 py-3 border-t border-ink-200 flex items-center justify-between bg-ink-50 gap-2">
+        <button id="postApproveSkip" class="text-sm font-semibold text-ink-600 px-3 py-2 hover:bg-ink-100 rounded">Skip all</button>
+        <button id="postApproveConfirm" class="text-sm font-semibold bg-emerald-600 text-white px-4 py-2 rounded-lg hover:bg-emerald-700">+ Create selected to-dos</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ONBOARDING DETAIL MODAL -->
+  <div id="onboardingDetailModal" class="hidden fixed inset-0 bg-black/60 z-[70] flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-4xl w-full max-h-[90vh] flex flex-col">
+      <div class="px-6 py-4 border-b border-ink-200 flex items-center justify-between">
+        <div>
+          <div class="text-xs text-violet-600 font-bold tracking-wider">CLIENT DETAILS</div>
+          <h2 id="onboardingDetailName" class="text-lg font-bold">—</h2>
+        </div>
+        <button id="closeOnboardingDetail" class="text-ink-500 hover:bg-ink-100 px-3 py-2 rounded-lg text-sm font-semibold">Close</button>
+      </div>
+      <div id="onboardingDetailBody" class="p-6 overflow-y-auto flex-1 space-y-4 text-sm">—</div>
+    </div>
+  </div>
+
+  <!-- EXEC RESULT MODAL -->
+  <div id="execResultModal" class="hidden fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-3xl w-full max-h-[90vh] flex flex-col">
+      <div class="px-6 py-4 border-b border-ink-200 flex items-center justify-between gap-3">
+        <div class="flex items-center gap-2">
+          <span id="execResultStatusBadge" class="inline-block text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded">—</span>
+          <h2 class="text-lg font-bold" id="execResultTitle">Execution result</h2>
+        </div>
+        <button id="closeExecResult" class="text-ink-500 hover:bg-ink-100 px-3 py-2 rounded-lg text-sm font-semibold">Close</button>
+      </div>
+      <div id="execResultBody" class="p-6 overflow-y-auto flex-1 space-y-4"></div>
+      <div class="px-6 py-3 border-t border-ink-200 flex items-center justify-end gap-2 bg-ink-50">
+        <button id="execCopyAll" class="text-xs font-semibold bg-ink-900 text-white px-3 py-2 rounded-lg hover:bg-ink-700">📋 Copy entire result</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+    const SUPABASE_URL = 'https://sfuvqaoeuajsrvldoiek.supabase.co';
+    const SUPABASE_KEY = 'sb_publishable_fRb1TIgDRxvkXFskGIMsnA_QikUcw9U';
+    const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+    let allClients = [];
+    let stageOverrides = {};
+    let activeFilter = 'all';
+    let searchTerm = '';
+    // Multi-select state: Set of client UIDs (trainerize_user_id || monday_item_id).
+    // Mirrors what the bulk endpoint expects — same identity used by single
+    // stage-override (POST /api/clients/:clientId/stage-override).
+    const selectedUids = new Set();
+    // Tracks per-section collapse state. Default = expanded (false).
+    const collapsedSections = {
+      red: false, yellow: false, green: false,
+      onboarding: false, ghosting: false, past: false,
+    };
+
+    // Stage order for both section rendering and sort within sections.
+    const STAGE_ORDER = ['onboarding', 'red', 'yellow', 'green', 'ghosting', 'past'];
+    const STAGE_LABELS = {
+      red: 'Red',
+      yellow: 'Yellow',
+      green: 'Green',
+      onboarding: 'Onboarding',
+      ghosting: 'Ghosting',
+      past: 'Past',
+    };
+
+    // Compute stage with override resolution. Returns
+    // { stage, autoStage, hasOverride } so the UI can flag manual assignments.
+    //
+    // Priority (highest → lowest):
+    //   1. Monday-sync compliance flag (client.auto_flag from sync_monday_clients.py)
+    //   2. Supabase snapshot flag (client.latest?.flag_color)
+    //   3. ghosting/no_data + past inference
+    function resolveStage(client) {
+      let autoStage = client.auto_flag || null;
+      if (!autoStage) {
+        const latest = client.latest;
+        autoStage = latest?.flag_color || null;
+      }
+      // Existing rule: client_status='ghosting' or no_data → ghosting
+      if (client.client_status === 'ghosting' || autoStage === 'no_data') {
+        autoStage = 'ghosting';
+      }
+      // New "past" auto-detection — inactive clients flow to past by default.
+      // (paused_at / expired_at columns aren't in schema yet — only is_active.)
+      if (client.is_active === false) {
+        autoStage = 'past';
+      }
+      // Look up override by trainerize_user_id (preferred) or fall back to UUID.
+      const overrideKey = String(client.trainerize_user_id || client.id);
+      const fallbackKey = String(client.id);
+      const overrideValue = stageOverrides[overrideKey] ?? stageOverrides[fallbackKey] ?? null;
+      const hasOverride = overrideValue !== null;
+      const stage = hasOverride ? overrideValue : autoStage;
+      return { stage, autoStage, hasOverride };
+    }
+
+    async function fetchStageOverrides() {
+      try {
+        const res = await fetch('/api/stage-overrides');
+        if (!res.ok) return {};
+        const data = await res.json();
+        return data.overrides || {};
+      } catch (e) {
+        console.warn('[stage-overrides] fetch failed:', e.message);
+        return {};
+      }
+    }
+
+    // Map a Monday status string → dashboard stage. Stage overrides still apply on top.
+    function mondayStatusToStage(status) {
+      switch ((status || '').trim()) {
+        case 'Fully Onboarded':       return 'green';
+        case 'Just Joined':           return 'onboarding';
+        case 'Bloods Ordered':        return 'green';
+        case 'Needs Bloods':          return 'yellow';
+        case 'GET TO RE-SIGN!':       return 'yellow';
+        case 'Fell Off':              return 'red';
+        case 'Paused':                return 'past';
+        case 'Expired':               return 'past';
+        default:                      return 'ghosting';
+      }
+    }
+
+    async function load() {
+      stageOverrides = await fetchStageOverrides();
+
+      // Monday-backed client list (replaces Supabase clients table read).
+      // /api/monday-clients reads server/monday-clients.json — produced by
+      // `python sync_monday_clients.py`. Returns { updated_at, clients: [...] }.
+      let mondayPayload = { updated_at: null, clients: [] };
+      try {
+        const res = await fetch('/api/monday-clients');
+        if (res.ok) mondayPayload = await res.json();
+      } catch (e) {
+        console.warn('[monday-clients] fetch failed:', e.message);
+      }
+
+      // Adapt Monday rows → the shape the existing renderer expects.
+      // - id ← monday_item_id (used by row click → client.html?id=...)
+      // - full_name ← name
+      // - start_date ← started_at
+      // - is_active / client_status derived from status
+      const adapted = (mondayPayload.clients || []).map(m => {
+        const stageFromStatus = mondayStatusToStage(m.status);
+        return {
+          id: m.monday_item_id,
+          monday_item_id: m.monday_item_id,
+          trainerize_user_id: m.trainerize_user_id || null,
+          full_name: m.name,
+          start_date: m.started_at,
+          starting_weight_lbs: m.starting_weight_lbs,
+          current_weight_lbs: m.current_weight_lbs,
+          goal_weight_lbs: m.goal_weight_lbs,
+          weight_change_lbs: m.weight_change_lbs,
+          programmed_to: m.programmed_to,
+          monday_status: m.status,
+          notes_short: m.notes_short,
+          // Derived to satisfy existing resolveStage logic
+          is_active: !m.is_past,
+          client_status: m.is_past ? 'past' : null,
+          // Snapshot/topRec stay null — Supabase-backed sections handle those.
+          latest: null,
+          topRec: null,
+          _autoStageFromStatus: stageFromStatus,
+          // Compliance fields from sync_monday_clients.py (active clients only)
+          auto_flag: m.auto_flag || null,
+          workouts_completed_7d: m.workouts_completed_7d,
+          workouts_scheduled_7d: m.workouts_scheduled_7d,
+          workouts_missed_7d: m.workouts_missed_7d,
+          days_logged_7d: m.days_logged_7d,
+          avg_protein_7d: m.avg_protein_7d,
+          protein_goal_g: m.protein_goal_g,
+          workout_pct: m.workout_pct,
+          log_pct: m.log_pct,
+          protein_pct: m.protein_pct,
+          last_weighin_date: m.last_weighin_date,
+          // Week-over-week weight trend
+          weight_lbs_prev_week: m.weight_lbs_prev_week,
+          weight_change_lbs_7d: m.weight_change_lbs_7d,
+          goal_direction: m.goal_direction,
+          trend_direction: m.trend_direction,
+          trend_aligned_with_goal: m.trend_aligned_with_goal,
+          trend_downgrade: m.trend_downgrade || false,
+        };
+      });
+
+      allClients = adapted.map(c => {
+        // resolveStage now prefers Monday-sync `auto_flag` (real compliance), then
+        // Supabase snapshot, then ghosting/past. The Monday-status fallback only
+        // kicks in if BOTH sources are missing — otherwise we'd overwrite a legit
+        // "ghosting" compliance signal with "green" from Fully Onboarded status.
+        const { stage: resolved, autoStage, hasOverride } = resolveStage(c);
+        const hasComplianceSignal = c.auto_flag != null || c.latest != null;
+        const stage = (resolved && resolved !== 'no_data' && (hasComplianceSignal || resolved !== 'ghosting'))
+          ? resolved
+          : c._autoStageFromStatus;
+        return {
+          ...c,
+          effectiveFlag: stage,
+          stage,
+          autoStage: autoStage || c._autoStageFromStatus,
+          hasOverride,
+        };
+      }).sort((a, b) => (a.full_name || '').localeCompare(b.full_name || ''));
+
+      // Make grid clients available to other panels (To-Do quick-add picker etc.)
+      window.dashboardClients = allClients;
+
+      // Sync state — still pulled from Supabase since sync_all.py writes it there.
+      try {
+        const { data: state } = await supabase.from('sync_state').select('*').eq('id', 1).limit(1);
+        if (state?.length && state[0].last_synced_at) {
+          const dt = new Date(state[0].last_synced_at);
+          document.getElementById('lastSynced').textContent = dt.toLocaleString(undefined, {
+            month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
+          });
+        } else if (mondayPayload.updated_at) {
+          const dt = new Date(mondayPayload.updated_at);
+          document.getElementById('lastSynced').textContent = dt.toLocaleString(undefined, {
+            month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
+          });
+        }
+      } catch (e) {
+        console.warn('[sync_state] read failed (non-fatal):', e.message);
+      }
+
+      renderCounts();
+      renderGrid();
+      document.getElementById('loading').classList.add('hidden');
+      document.getElementById('grid').classList.remove('hidden');
+    }
+
+    function renderCounts() {
+      const counts = { all: 0, red: 0, yellow: 0, green: 0, onboarding: 0, ghosting: 0, past: 0 };
+      allClients.forEach(c => {
+        const stage = c.stage;
+        if (stage === 'past') { counts.past++; return; }
+        counts.all++;
+        if (counts[stage] !== undefined) counts[stage]++;
+      });
+      document.getElementById('countAll').textContent = counts.all;
+      document.getElementById('countRed').textContent = counts.red;
+      document.getElementById('countYellow').textContent = counts.yellow;
+      document.getElementById('countGreen').textContent = counts.green;
+      document.getElementById('countOnboarding').textContent = counts.onboarding;
+      document.getElementById('countGhosting').textContent = counts.ghosting;
+      document.getElementById('countPast').textContent = counts.past;
+    }
+
+    // ── Row helpers ───────────────────────────────────────
+    function weeksSince(startDate) {
+      if (!startDate) return null;
+      const start = new Date(startDate).getTime();
+      if (isNaN(start)) return null;
+      const days = Math.floor((Date.now() - start) / 86400000);
+      return Math.max(0, Math.floor(days / 7)) + 1; // week 1 on day 0
+    }
+
+    // current weight: prefer direct Monday field, fall back to snapshot-derived value.
+    function currentWeightLb(client) {
+      if (client.current_weight_lbs != null) return client.current_weight_lbs;
+      const start = client.starting_weight_lbs;
+      const change = client.latest?.weight_change_last_4wk;
+      if (start == null || change == null) return null;
+      return Math.round((start + change) * 10) / 10;
+    }
+
+    function dashOrNum(v, suffix = '') {
+      if (v == null || v === '' || (typeof v === 'number' && isNaN(v))) return '—';
+      return `${v}${suffix}`;
+    }
+
+    // Week-over-week trend: shows last-week delta with goal alignment indicator.
+    // - Aligned (matches goal direction): green w/ ✓
+    // - Misaligned (moving the wrong way): bold red w/ ⚠️  ← the Wendy signal
+    // - Flat: muted gray
+    // - No data: em dash
+    function renderTrend(client) {
+      const change = client.weight_change_lbs_7d;
+      if (change == null) return { text: '—', cls: 'muted' };
+      const abs = Math.abs(change);
+      const arrow = change > 0 ? '↑' : change < 0 ? '↓' : '·';
+      const base = `${arrow} ${abs.toFixed(1)} lb`;
+      const aligned = client.trend_aligned_with_goal;
+      if (aligned === true)  return { text: `${base} ✓`,  cls: 'trend-good' };
+      if (aligned === false) return { text: `${base} ⚠️`, cls: 'trend-bad' };
+      // null / flat — no signal
+      return { text: base, cls: 'trend-flat' };
+    }
+
+    // Δ: current - start. Negative = lost weight.
+    // Color: green if moving toward goal, red if wrong direction.
+    function renderDelta(client) {
+      const start = client.starting_weight_lbs;
+      const goal = client.goal_weight_lbs;
+      // Prefer the Monday-parsed weight_change_lbs; fall back to snapshot 4wk delta.
+      const change = client.weight_change_lbs != null
+        ? client.weight_change_lbs
+        : client.latest?.weight_change_last_4wk;
+      if (start == null || change == null) return { text: '—', cls: 'muted' };
+      const delta = Math.round(change * 10) / 10;
+      const arrow = delta < 0 ? '↓' : delta > 0 ? '↑' : '·';
+      const text = `${arrow} ${Math.abs(delta).toFixed(1)} lb`;
+      if (goal == null || delta === 0) return { text, cls: '' };
+      const wantsLoss = goal < start;
+      const goodDirection = wantsLoss ? delta < 0 : delta > 0;
+      return { text, cls: goodDirection ? 'delta-good' : 'delta-bad' };
+    }
+
+    function renderGrid() {
+      const grid = document.getElementById('grid');
+      grid.innerHTML = '';
+
+      // Filter step — respect search and active filter chip.
+      const filtered = allClients
+        .filter(c => {
+          if (activeFilter === 'all') return c.stage !== 'past';
+          return c.stage === activeFilter;
+        })
+        .filter(c => !searchTerm || c.full_name.toLowerCase().includes(searchTerm));
+
+      if (!filtered.length) {
+        document.getElementById('empty').classList.remove('hidden');
+        return;
+      }
+      document.getElementById('empty').classList.add('hidden');
+
+      // Group by stage. When filtering to a specific stage, only that section renders.
+      const groups = {};
+      for (const stage of STAGE_ORDER) groups[stage] = [];
+      for (const c of filtered) {
+        if (groups[c.stage]) groups[c.stage].push(c);
+      }
+      // Sort within group alphabetically.
+      for (const stage of STAGE_ORDER) {
+        groups[stage].sort((a, b) => a.full_name.localeCompare(b.full_name));
+      }
+
+      // Determine which sections to render. When activeFilter='all', show all
+      // 6. Otherwise show only the selected one.
+      const sectionsToRender =
+        activeFilter === 'all' ? STAGE_ORDER : [activeFilter];
+
+      for (const stage of sectionsToRender) {
+        const clients = groups[stage] || [];
+        if (clients.length === 0) continue; // skip empty groups
+
+        const isCollapsed = collapsedSections[stage] === true;
+        const section = document.createElement('section');
+        section.className = `stage-section${isCollapsed ? ' collapsed' : ''}`;
+        section.dataset.stage = stage;
+
+        section.innerHTML = `
+          <header class="stage-header" data-toggle="${stage}">
+            <span class="stage-dot stage-dot-${stage}"></span>
+            <span class="font-semibold text-ink-900 text-sm">${STAGE_LABELS[stage]}</span>
+            <span class="stage-count">${clients.length}</span>
+            <span class="stage-chev">▾</span>
+          </header>
+          <div class="stage-body overflow-x-auto">
+            <table class="stage-table">
+              <thead>
+                <tr>
+                  <th class="check-col"><input type="checkbox" class="section-check" data-section="${stage}" aria-label="Select all in ${STAGE_LABELS[stage]}"></th>
+                  <th>Name</th>
+                  <th>Week #</th>
+                  <th>Start lb</th>
+                  <th>Current lb</th>
+                  <th>Goal lb</th>
+                  <th>Δ lb</th>
+                  <th>Trend</th>
+                  <th>Workouts</th>
+                  <th>Logs</th>
+                  <th>Avg protein</th>
+                  <th>RAG</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        `;
+
+        const tbody = section.querySelector('tbody');
+        for (const c of clients) {
+          const tr = document.createElement('tr');
+          tr.dataset.clientId = c.id;
+          tr.dataset.clientUid = String(c.trainerize_user_id || c.id);
+          tr.dataset.clientName = c.full_name;
+
+          const latest = c.latest;
+          const wk = weeksSince(c.start_date);
+          const cur = currentWeightLb(c);
+          const delta = renderDelta(c);
+          const trend = renderTrend(c);
+          // Prefer Monday-sync compliance fields; fall back to Supabase snapshot.
+          const woCompleted = c.workouts_completed_7d ?? latest?.workouts_completed_this_week;
+          const woScheduled = c.workouts_scheduled_7d ?? latest?.workouts_scheduled_this_week;
+          const workouts = (woCompleted != null)
+            ? `${woCompleted}/${woScheduled ?? 0}`
+            : '—';
+          const daysLogged = c.days_logged_7d ?? latest?.days_logged_last_7;
+          const logs = (daysLogged != null) ? `${daysLogged}/7` : '—';
+          const proteinAvg = c.avg_protein_7d ?? latest?.avg_protein_g_7d;
+          const avgProtein = proteinAvg
+            ? `${Math.round(proteinAvg)}g`
+            : '—';
+          const overrideTag = c.hasOverride
+            ? `<span class="override-tag">OVR</span>` : '';
+
+          tr.innerHTML = `
+            <td class="check-col"><input type="checkbox" class="row-check" data-client-id="${c.id}" data-client-uid="${String(c.trainerize_user_id || c.id)}" aria-label="Select ${c.full_name}"></td>
+            <td class="name-cell">${c.full_name}${overrideTag}</td>
+            <td>${dashOrNum(wk)}</td>
+            <td>${dashOrNum(c.starting_weight_lbs)}</td>
+            <td>${dashOrNum(cur)}</td>
+            <td>${dashOrNum(c.goal_weight_lbs)}</td>
+            <td class="${delta.cls}">${delta.text}</td>
+            <td class="${trend.cls}">${trend.text}</td>
+            <td>${workouts}</td>
+            <td>${logs}</td>
+            <td>${avgProtein}</td>
+            <td><span class="stage-dot stage-dot-${c.stage}" title="${STAGE_LABELS[c.stage] || c.stage}"></span></td>
+          `;
+          // Direct click handler — defensive against delegation getting eaten
+          tr.addEventListener('click', (ev) => {
+            // Ignore if right-click or modifier (let context menu / new-tab work)
+            if (ev.button !== 0 || ev.metaKey || ev.ctrlKey) return;
+            // Ignore clicks landing on the checkbox or its cell — selection only
+            if (ev.target.closest('.check-col')) return;
+            const id = tr.dataset.clientId;
+            if (id) window.location.href = `client.html?id=${encodeURIComponent(id)}`;
+          });
+          tbody.appendChild(tr);
+        }
+        grid.appendChild(section);
+      }
+
+      // Restore selection state for any previously-selected uids that are
+      // still visible after this render.
+      syncCheckboxesFromState();
+      refreshBulkBar();
+    }
+
+    // Filter chips
+    document.querySelectorAll('.filter-chip').forEach(btn => {
+      btn.addEventListener('click', () => {
+        activeFilter = btn.dataset.flag;
+        document.querySelectorAll('.filter-chip').forEach(b => {
+          b.classList.remove('bg-ink-900', 'text-white');
+          b.classList.add('bg-white', 'border', 'border-ink-200', 'text-ink-700');
+        });
+        btn.classList.add('bg-ink-900', 'text-white');
+        btn.classList.remove('bg-white', 'border', 'border-ink-200', 'text-ink-700');
+        renderGrid();
+      });
+    });
+
+    // Search
+    document.getElementById('search').addEventListener('input', (e) => {
+      searchTerm = e.target.value.toLowerCase();
+      renderGrid();
+    });
+
+    // ── Stage section toggle + row navigation (delegated) ──
+    document.getElementById('grid').addEventListener('click', (e) => {
+      // Toggle section collapse
+      const header = e.target.closest('.stage-header');
+      if (header) {
+        const stage = header.dataset.toggle;
+        collapsedSections[stage] = !collapsedSections[stage];
+        header.parentElement.classList.toggle('collapsed', collapsedSections[stage]);
+        return;
+      }
+      // Row click → client detail. Skip if click landed in the checkbox cell.
+      if (e.target.closest('.check-col')) return;
+      const row = e.target.closest('.stage-table tbody tr');
+      if (row && row.dataset.clientId) {
+        window.location.href = `client.html?id=${row.dataset.clientId}`;
+      }
+    });
+
+    // ── Right-click context menu for stage override ──
+    const ctxMenu = document.getElementById('stageContextMenu');
+
+    function hideCtxMenu() { ctxMenu.classList.add('hidden'); ctxMenu.innerHTML = ''; }
+
+    document.addEventListener('click', (e) => {
+      if (!ctxMenu.contains(e.target)) hideCtxMenu();
+    });
+    document.addEventListener('scroll', hideCtxMenu, true);
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideCtxMenu(); });
+
+    document.getElementById('grid').addEventListener('contextmenu', (e) => {
+      const row = e.target.closest('.stage-table tbody tr');
+      if (!row) return;
+      e.preventDefault();
+      const clientUid = row.dataset.clientUid;
+      const clientName = row.dataset.clientName;
+
+      // Build menu options
+      const items = [
+        ...STAGE_ORDER.map(s => ({
+          stage: s,
+          label: STAGE_LABELS[s],
+          dotClass: `stage-dot-${s}`,
+        })),
+        { stage: null, label: 'Auto (clear override)', dotClass: 'stage-dot-past' },
+      ];
+
+      ctxMenu.innerHTML = `
+        <div class="ctx-menu-header">Set stage · ${clientName}</div>
+        ${items.map((it, i) => `
+          ${it.stage === null ? '<div class="ctx-menu-divider"></div>' : ''}
+          <div class="ctx-menu-item" data-set-stage="${it.stage === null ? '__auto__' : it.stage}">
+            <span class="stage-dot ${it.dotClass}"></span>
+            <span>${it.label}</span>
+          </div>
+        `).join('')}
+      `;
+
+      // Position
+      ctxMenu.style.left = `${e.pageX}px`;
+      ctxMenu.style.top = `${e.pageY}px`;
+      ctxMenu.classList.remove('hidden');
+
+      // Clamp to viewport (best-effort — re-measure after render)
+      requestAnimationFrame(() => {
+        const rect = ctxMenu.getBoundingClientRect();
+        if (rect.right > window.innerWidth) {
+          ctxMenu.style.left = `${window.innerWidth - rect.width - 8}px`;
+        }
+        if (rect.bottom > window.innerHeight) {
+          ctxMenu.style.top = `${window.scrollY + window.innerHeight - rect.height - 8}px`;
+        }
+      });
+
+      // Click handler (scoped to this menu render)
+      ctxMenu.querySelectorAll('[data-set-stage]').forEach(item => {
+        item.addEventListener('click', async () => {
+          const raw = item.dataset.setStage;
+          const stage = raw === '__auto__' ? null : raw;
+          hideCtxMenu();
+          try {
+            const res = await fetch(`/api/clients/${encodeURIComponent(clientUid)}/stage-override`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ stage }),
+            });
+            if (!res.ok) {
+              const err = await res.json().catch(() => ({ error: res.statusText }));
+              alert(`Override failed: ${err.error}`);
+              return;
+            }
+            // Refresh data + re-render
+            await load();
+          } catch (err) {
+            alert(`Override failed: ${err.message}`);
+          }
+        });
+      });
+    });
+
+    // ── Multi-select + bulk stage override ──────────────────────────
+    const bulkBar = document.getElementById('bulkBar');
+    const bulkCountEl = document.getElementById('bulkCount');
+    const masterSelectAll = document.getElementById('masterSelectAll');
+
+    function getVisibleRowChecks() {
+      return Array.from(document.querySelectorAll('#grid .row-check'));
+    }
+
+    function syncCheckboxesFromState() {
+      // Restore row-check state from selectedUids
+      for (const cb of getVisibleRowChecks()) {
+        const uid = cb.dataset.clientUid;
+        const checked = selectedUids.has(uid);
+        cb.checked = checked;
+        const tr = cb.closest('tr');
+        if (tr) tr.classList.toggle('row-selected', checked);
+      }
+      // Recompute each section-check based on its rows
+      for (const sectionCheck of document.querySelectorAll('.section-check')) {
+        const section = sectionCheck.closest('.stage-section');
+        if (!section) continue;
+        const rowChecks = section.querySelectorAll('.row-check');
+        if (rowChecks.length === 0) {
+          sectionCheck.checked = false;
+          sectionCheck.indeterminate = false;
+          continue;
+        }
+        const checkedCount = Array.from(rowChecks).filter(c => c.checked).length;
+        sectionCheck.checked = checkedCount === rowChecks.length;
+        sectionCheck.indeterminate = checkedCount > 0 && checkedCount < rowChecks.length;
+      }
+      // Master check reflects "all visible rows are checked"
+      const allRows = getVisibleRowChecks();
+      if (allRows.length === 0) {
+        masterSelectAll.checked = false;
+        masterSelectAll.indeterminate = false;
+      } else {
+        const checkedCount = allRows.filter(c => c.checked).length;
+        masterSelectAll.checked = checkedCount === allRows.length;
+        masterSelectAll.indeterminate = checkedCount > 0 && checkedCount < allRows.length;
+      }
+    }
+
+    function refreshBulkBar() {
+      const n = selectedUids.size;
+      bulkCountEl.textContent = String(n);
+      bulkBar.classList.toggle('visible', n > 0);
+    }
+
+    function clearSelection() {
+      selectedUids.clear();
+      for (const cb of getVisibleRowChecks()) {
+        cb.checked = false;
+        const tr = cb.closest('tr');
+        if (tr) tr.classList.remove('row-selected');
+      }
+      for (const sc of document.querySelectorAll('.section-check')) {
+        sc.checked = false;
+        sc.indeterminate = false;
+      }
+      masterSelectAll.checked = false;
+      masterSelectAll.indeterminate = false;
+      refreshBulkBar();
+    }
+
+    // Per-row checkbox: delegated change handler
+    document.getElementById('grid').addEventListener('change', (e) => {
+      const target = e.target;
+      if (target.classList.contains('row-check')) {
+        const uid = target.dataset.clientUid;
+        if (target.checked) {
+          selectedUids.add(uid);
+        } else {
+          selectedUids.delete(uid);
+        }
+        const tr = target.closest('tr');
+        if (tr) tr.classList.toggle('row-selected', target.checked);
+        syncCheckboxesFromState();
+        refreshBulkBar();
+        return;
+      }
+      if (target.classList.contains('section-check')) {
+        const section = target.closest('.stage-section');
+        if (!section) return;
+        const wantChecked = target.checked;
+        for (const cb of section.querySelectorAll('.row-check')) {
+          const uid = cb.dataset.clientUid;
+          cb.checked = wantChecked;
+          const tr = cb.closest('tr');
+          if (tr) tr.classList.toggle('row-selected', wantChecked);
+          if (wantChecked) selectedUids.add(uid);
+          else selectedUids.delete(uid);
+        }
+        syncCheckboxesFromState();
+        refreshBulkBar();
+      }
+    });
+
+    // Prevent checkbox clicks from bubbling to row navigation
+    document.getElementById('grid').addEventListener('click', (e) => {
+      if (e.target.classList.contains('row-check') || e.target.classList.contains('section-check')) {
+        e.stopPropagation();
+      }
+    }, true);
+
+    // Master select all
+    masterSelectAll.addEventListener('change', () => {
+      const wantChecked = masterSelectAll.checked;
+      for (const cb of getVisibleRowChecks()) {
+        cb.checked = wantChecked;
+        const tr = cb.closest('tr');
+        if (tr) tr.classList.toggle('row-selected', wantChecked);
+        const uid = cb.dataset.clientUid;
+        if (wantChecked) selectedUids.add(uid);
+        else selectedUids.delete(uid);
+      }
+      syncCheckboxesFromState();
+      refreshBulkBar();
+    });
+
+    // Bulk stage buttons
+    document.querySelectorAll('#bulkBar .bulk-stage-btn[data-bulk-stage]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        if (selectedUids.size === 0) return;
+        const raw = btn.dataset.bulkStage;
+        const stage = raw === '__auto__' ? null : raw;
+        const clientIds = Array.from(selectedUids);
+        // Optimistic: disable bar during request
+        const buttons = Array.from(document.querySelectorAll('#bulkBar button'));
+        buttons.forEach(b => { b.disabled = true; });
+        try {
+          const res = await fetch('/api/clients/bulk-stage-override', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ clientIds, stage }),
+          });
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({ error: res.statusText }));
+            alert(`Bulk override failed: ${err.error}`);
+            return;
+          }
+          // Success — clear selection and reload data
+          selectedUids.clear();
+          await load();
+        } catch (err) {
+          alert(`Bulk override failed: ${err.message}`);
+        } finally {
+          buttons.forEach(b => { b.disabled = false; });
+        }
+      });
+    });
+
+    // Clear button
+    document.getElementById('bulkClearBtn').addEventListener('click', clearSelection);
+
+    // Sync modal — real run via server
+    const modal = document.getElementById('syncModal');
+    const syncLog = document.getElementById('syncLog');
+    document.getElementById('syncBtn').addEventListener('click', () => modal.classList.remove('hidden'));
+    document.getElementById('closeModal').addEventListener('click', () => modal.classList.add('hidden'));
+    modal.addEventListener('click', e => { if (e.target === modal) modal.classList.add('hidden'); });
+
+    async function runJob(btnId, url, body, runningLabel, doneLabel) {
+      const btn = document.getElementById(btnId);
+      const otherBtn = document.getElementById(btnId === 'runSync' ? 'runRecs' : 'runSync');
+      const origLabel = btn.textContent;
+      btn.disabled = true;
+      otherBtn.disabled = true;
+      btn.textContent = runningLabel;
+      syncLog.classList.remove('hidden');
+      syncLog.textContent = '';
+      await streamPost(url, body, (type, data) => {
+        if (type === 'stdout' || type === 'stderr') {
+          syncLog.textContent += data.line + '\n';
+          syncLog.scrollTop = syncLog.scrollHeight;
+        } else if (type === 'exit') {
+          btn.disabled = false;
+          otherBtn.disabled = false;
+          btn.textContent = data.code === 0 ? doneLabel : `✗ Exit ${data.code} — ${origLabel}`;
+          if (data.code === 0) setTimeout(() => load(), 500);
+        }
+      });
+    }
+
+    document.getElementById('runSync').addEventListener('click', () =>
+      runJob('runSync', '/api/sync', { skipRecs: true, workers: 8 }, '⏱ Syncing data...', '✓ Sync Done — Re-run')
+    );
+
+    document.getElementById('runRecs').addEventListener('click', () =>
+      runJob('runRecs', '/api/sync/recs', null, '🧠 Generating recs...', '✓ Recs Done — Re-run')
+    );
+
+    // SSE-ish streamer (server sends Server-Sent Events)
+    async function streamPost(url, body, onEvent) {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: body ? JSON.stringify(body) : null,
+      });
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split('\n');
+        buf = lines.pop();
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const { type, ...rest } = JSON.parse(line.slice(6));
+              onEvent(type, rest);
+            } catch {}
+          }
+        }
+      }
+    }
+
+    // ─────── ACTION QUEUE (now backed by Supabase coach_todos via /api/todos) ───────
+    const QUEUE_STORAGE_KEY = 'faerber_action_queue_v1';
+    const ACTION_TYPE_TO_CATEGORY = {
+      meal_plan: 'mealplan',
+      workout_adjust: 'workout',
+      adjust_targets: 'calorie',
+      phase_transition: 'workout',
+      schedule_call: 'call',
+      send_resource: 'other',
+    };
+
+    // In-memory cache of open todos. Refreshed from /api/todos.
+    // Each entry is shaped { id, key, client, type, title, body, priority, done } to stay backwards-compatible with old queue code paths.
+    let todoCache = [];
+
+    async function refreshTodoCache() {
+      try {
+        const res = await fetch('/api/todos?status=open');
+        const data = await res.json();
+        todoCache = (data.todos || []).map(t => {
+          const ctx = t.context || {};
+          return {
+            id: t.id,
+            key: ctx.rec_key || `${t.client_name}::manual::${t.id}`,
+            client: t.client_name,
+            type: ctx.action_type || t.category,
+            title: ctx.rec_title || t.note.split('\n')[0].slice(0, 120),
+            body: ctx.rec_body || (t.note.includes('\n') ? t.note.split('\n').slice(1).join('\n') : ''),
+            priority: ctx.rec_priority || null,
+            queued_at: t.created_at,
+            done: false,
+            category: t.category,
+            note: t.note,
+            source: t.source,
+            context: ctx,
+          };
+        });
+      } catch (e) {
+        console.error('refreshTodoCache failed', e);
+        todoCache = [];
+      }
+    }
+
+    // Legacy stubs — return from cache. Async refresh on triage open + after edits.
+    function loadQueue() { return todoCache; }
+    function saveQueue(_q) { /* no-op: Supabase is source of truth */ }
+
+    function makeRecKey(client, rec) {
+      return `${client}::${rec.priority}::${rec.title}`.replace(/[^a-zA-Z0-9:_\-]/g, '_');
+    }
+    function isQueued(key) {
+      return todoCache.some(i => i.key === key);
+    }
+
+    // One-time migration of localStorage queue → Supabase.
+    async function migrateLocalQueueIfAny() {
+      let local;
+      try { local = JSON.parse(localStorage.getItem(QUEUE_STORAGE_KEY) || '[]'); }
+      catch { return; }
+      if (!Array.isArray(local) || local.length === 0) return;
+      const open = local.filter(i => !i.done);
+      if (open.length === 0) {
+        localStorage.removeItem(QUEUE_STORAGE_KEY);
+        return;
+      }
+      console.log(`[migrate] importing ${open.length} legacy queue items into coach_todos`);
+      for (const item of open) {
+        const category = ACTION_TYPE_TO_CATEGORY[item.type] || 'other';
+        try {
+          await addTodo({
+            client_name: item.client,
+            category,
+            note: `${item.title || ''}\n${item.body || ''}`.trim() || '(migrated from action queue)',
+            source: 'manual',
+            context: { action_type: item.type, rec_key: item.key, rec_title: item.title, rec_body: item.body, migrated: true },
+          });
+        } catch (e) { console.warn('migrate failed for', item.key, e.message); }
+      }
+      localStorage.setItem(QUEUE_STORAGE_KEY + '_migrated_at', new Date().toISOString());
+      localStorage.removeItem(QUEUE_STORAGE_KEY);
+    }
+    function classifyAction(rec) {
+      const title = (rec.title || '').toLowerCase();
+      const body = ((rec.body || '') + ' ' + (rec.bullets || []).join(' ')).toLowerCase();
+      const all = title + ' ' + body;
+      const at = rec.action_type;
+
+      // Skip non-actionable
+      if (at === 'celebrate' || at === 'monitor' || at === 'send_message') return null;
+
+      // Meal plan / nutrition resource
+      if (/meal plan|meal idea|recipe|grocery list|family[- ]friendly meal|kid[- ]friendly meal|eating out|protocol|swap|food list|menu/.test(all)) {
+        return { type: 'meal_plan', icon: '🍽', label: 'Build meal plan', bg: 'bg-emerald-600' };
+      }
+      // Workout adjustments / phase transitions / new program
+      if (/workout|training|phase|program|split|leg day|upper|lower|cardio|reps|sets|deload|new plan|knee[- ]stress/.test(all)) {
+        return { type: 'workout_adjust', icon: '💪', label: 'Adjust workouts', bg: 'bg-indigo-600' };
+      }
+      // Target adjustments
+      if (/raise calorie|drop calorie|bump protein|adjust target|increase protein|new macro|new target|cal goal|protein goal/.test(all)) {
+        return { type: 'adjust_targets', icon: '📊', label: 'Adjust targets', bg: 'bg-cyan-600' };
+      }
+      // Phase transition flag
+      if (/phase 2|phase 3|phase 4|next phase|phase transition|new phase/.test(all)) {
+        return { type: 'phase_transition', icon: '🔄', label: 'Phase transition', bg: 'bg-purple-600' };
+      }
+      // Send call / schedule
+      if (at === 'schedule_call' || /set up a call|schedule a call|jump on a call|call this week|flag for call/.test(all)) {
+        return { type: 'schedule_call', icon: '📞', label: 'Flag for call', bg: 'bg-rose-600' };
+      }
+      // Resource (PDF, Loom, guide)
+      if (at === 'send_resource' || /loom|video|guide|pdf|cheat sheet|handout|resource|template|sheet/.test(all)) {
+        return { type: 'send_resource', icon: '📎', label: 'Build resource', bg: 'bg-slate-700' };
+      }
+      // adjust_program catchall — assume workout adjust
+      if (at === 'adjust_program') {
+        return { type: 'workout_adjust', icon: '⚙️', label: 'Adjust program', bg: 'bg-indigo-600' };
+      }
+      return null;
+    }
+    const BOOKING_LINK = 'https://go.faerberfitness.com/widget/bookings/15zf';
+    const BOOKING_BLOCK = `\n\nPlease use the link below to book a call.\n${BOOKING_LINK}`;
+
+    async function toggleQueue(btn) {
+      const key = btn.dataset.actionKey;
+      const client = btn.dataset.actionClient;
+      const type = btn.dataset.actionType;
+      const title = btn.dataset.actionTitle;
+      const recIdx = parseInt(btn.dataset.actionRecIdx, 10);
+      const r = triageData.responses[triageIdx];
+      const existing = todoCache.find(i => i.key === key);
+
+      btn.disabled = true;
+      try {
+        if (existing) {
+          await deleteTodo(existing.id);
+          // If this was a schedule_call, strip the booking block from the response
+          if (type === 'schedule_call') {
+            const cleaned = r.response.replace(BOOKING_BLOCK, '').replace(/\n\nPlease use the link below to book a call\.\nhttps:\/\/go\.faerberfitness\.com\/widget\/bookings\/15zf/g, '');
+            r.response = cleaned;
+            document.getElementById('triageResponse').value = cleaned;
+            saveCurrent(false);
+          }
+        } else {
+          const rec = r.recs[recIdx];
+          const category = ACTION_TYPE_TO_CATEGORY[type] || 'other';
+          const body = rec.body || (rec.bullets || []).join(' · ');
+          await addTodo({
+            client_name: client,
+            category,
+            note: `${title}${body ? '\n\n' + body : ''}`,
+            source: 'checkin',
+            priority: rec.priority === 1 ? 'high' : 'normal',
+            context: { action_type: type, rec_key: key, rec_title: title, rec_body: body, rec_priority: rec.priority },
+          });
+          // Schedule call: auto-inject booking link above the *** footer
+          if (type === 'schedule_call' && !r.response.includes(BOOKING_LINK)) {
+            let updated;
+            const parts = r.response.split(/\n\*\*\*/);
+            if (parts.length >= 2) {
+              updated = parts[0].trimEnd() + BOOKING_BLOCK + '\n\n***' + parts.slice(1).join('\n***');
+            } else {
+              updated = r.response.trimEnd() + BOOKING_BLOCK;
+            }
+            r.response = updated;
+            document.getElementById('triageResponse').value = updated;
+            saveCurrent(false);
+          }
+        }
+        await refreshTodoCache();
+        renderCurrent();
+        updateQueueBadge();
+        refreshTodoBadge();
+      } catch (e) {
+        alert('Failed to toggle to-do: ' + e.message);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+    function updateQueueBadge() {
+      // Legacy badge — now hidden. Real badge is the To-Do button.
+      const count = document.getElementById('actionQueueCount');
+      if (count) count.textContent = todoCache.length;
+    }
+
+    function getActionPrompt(item) {
+      const promptByType = {
+        meal_plan: `Build a meal plan PDF for ${item.client}. Recommendation: "${item.title}". Context: ${item.body}. Use the tony-format meal plan template (anchor + add-ons + gold total bar). Check Monday Notes Doc for their macro targets + sensitivities + dietary context BEFORE building. Save to ~/Downloads/${item.client.replace(/\s+/g, '_')}_Meal_Plan.pdf`,
+        workout_adjust: `Adjust workouts for ${item.client}. Recommendation: "${item.title}". Context: ${item.body}. Pull their current plan from Trainerize, propose the change, get my approval, then use create-workout.js with --client "${item.client}" flag. Do NOT schedule without confirming the pattern first.`,
+        adjust_targets: `Adjust nutrition targets for ${item.client}. Recommendation: "${item.title}". Context: ${item.body}. Update Trainerize via API. Confirm new calorie + protein numbers with me before pushing.`,
+        phase_transition: `Build Phase 2 (or next phase) for ${item.client}. Recommendation: "${item.title}". Pull current program, apply phase template per coaching system memory, surface the plan, get approval, then create new workouts via create-workout.js. Update Coach Board "Programmed To".`,
+        schedule_call: `Flag ${item.client} for a call this week. Recommendation: "${item.title}". Context: ${item.body}. Send them the booking link and add to call list.`,
+        send_resource: `Build resource for ${item.client}. Recommendation: "${item.title}". Context: ${item.body}. Decide format (PDF / Loom / template / cheat sheet) based on the rec, generate it, and add to their thread.`,
+      };
+      return promptByType[item.type] || `Action for ${item.client}: ${item.title} — ${item.body}`;
+    }
+
+    function renderQueueModal() {
+      const q = loadQueue();
+      const list = document.getElementById('actionQueueList');
+      const summary = document.getElementById('actionQueueSummary');
+      const done = q.filter(i => i.done).length;
+      summary.textContent = `${q.length} items · ${done} done · ${q.length - done} open`;
+      if (q.length === 0) {
+        list.innerHTML = '<div class="text-center text-ink-400 py-8 text-sm">No actions queued yet.</div>';
+        return;
+      }
+      // Group by client
+      const byClient = {};
+      for (const item of q) {
+        if (!byClient[item.client]) byClient[item.client] = [];
+        byClient[item.client].push(item);
+      }
+      const typeStyle = {
+        meal_plan: 'bg-emerald-50 border-emerald-300 text-emerald-900',
+        workout_adjust: 'bg-indigo-50 border-indigo-300 text-indigo-900',
+        adjust_targets: 'bg-cyan-50 border-cyan-300 text-cyan-900',
+        phase_transition: 'bg-purple-50 border-purple-300 text-purple-900',
+        schedule_call: 'bg-rose-50 border-rose-300 text-rose-900',
+        send_resource: 'bg-slate-50 border-slate-300 text-slate-900',
+      };
+      list.innerHTML = Object.entries(byClient).map(([client, items]) => `
+        <div class="border border-ink-200 rounded-xl overflow-hidden">
+          <div class="bg-ink-50 px-4 py-2 text-sm font-bold text-ink-900">${escapeHtml(client)} <span class="text-ink-500 font-normal">· ${items.length} action${items.length>1?'s':''}</span></div>
+          <div class="divide-y divide-ink-100">
+            ${items.map(item => `
+              <div class="p-3 ${item.done ? 'bg-ink-50 opacity-60' : ''}">
+                <div class="flex items-start justify-between gap-3">
+                  <div class="flex-1 min-w-0">
+                    <span class="inline-block text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${typeStyle[item.type] || 'bg-ink-100 text-ink-700'} border mb-1">${item.type.replace(/_/g, ' ')}</span>
+                    <div class="text-sm font-semibold text-ink-900 ${item.done ? 'line-through' : ''}">${escapeHtml(item.title)}</div>
+                    <div class="text-xs text-ink-500 mt-0.5">${escapeHtml(item.body)}</div>
+                  </div>
+                  <div class="flex gap-1 flex-shrink-0">
+                    <button data-queue-key="${item.key}" class="queue-copy text-[11px] font-semibold px-2 py-1 bg-ink-100 text-ink-700 rounded hover:bg-ink-200">📋 Copy prompt</button>
+                    <button data-queue-key="${item.key}" class="queue-done text-[11px] font-semibold px-2 py-1 ${item.done ? 'bg-ink-200 text-ink-700' : 'bg-emerald-600 text-white hover:bg-emerald-700'} rounded">${item.done ? '↺ Undo' : '✓ Done'}</button>
+                    <button data-queue-key="${item.key}" class="queue-remove text-[11px] font-semibold px-2 py-1 bg-red-50 text-red-700 rounded hover:bg-red-100">✕</button>
+                  </div>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `).join('');
+      // Wire item buttons
+      list.querySelectorAll('.queue-copy').forEach(b => b.addEventListener('click', () => {
+        const item = todoCache.find(i => i.key === b.dataset.queueKey);
+        if (item) {
+          navigator.clipboard.writeText(getActionPrompt(item));
+          b.textContent = '✓ Copied!';
+          setTimeout(() => b.textContent = '📋 Copy prompt', 1500);
+        }
+      }));
+      list.querySelectorAll('.queue-done').forEach(b => b.addEventListener('click', async () => {
+        const item = todoCache.find(i => i.key === b.dataset.queueKey);
+        if (!item) return;
+        await completeTodo(item.id);
+        await refreshTodoCache();
+        renderQueueModal();
+        updateQueueBadge();
+        refreshTodoBadge();
+      }));
+      list.querySelectorAll('.queue-remove').forEach(b => b.addEventListener('click', async () => {
+        const item = todoCache.find(i => i.key === b.dataset.queueKey);
+        if (!item) return;
+        await deleteTodo(item.id);
+        await refreshTodoCache();
+        renderQueueModal();
+        updateQueueBadge();
+        refreshTodoBadge();
+        if (triageData) renderCurrent();
+      }));
+    }
+
+    // Legacy actionQueueBtn now opens the unified to-do modal.
+    document.getElementById('actionQueueBtn').addEventListener('click', () => openTodoList());
+    // Hide the old action queue modal entirely (kept in DOM for backwards compat with openTodoReport)
+    document.getElementById('actionQueueModal').classList.add('hidden');
+    document.getElementById('closeQueueModal')?.addEventListener('click', () => {
+      document.getElementById('actionQueueModal').classList.add('hidden');
+    });
+    document.getElementById('actionQueueModal').addEventListener('click', e => {
+      if (e.target.id === 'actionQueueModal') e.target.classList.add('hidden');
+    });
+    document.getElementById('clearDoneBtn')?.addEventListener('click', async () => {
+      // No-op: done items don't accumulate in Supabase view (status filter is "open")
+      renderQueueModal();
+    });
+    updateQueueBadge();
+
+    // Migrate any localStorage action queue → Supabase + initial cache populate
+    (async () => {
+      await migrateLocalQueueIfAny();
+      await refreshTodoCache();
+      updateQueueBadge();
+      refreshTodoBadge();
+    })();
+
+    // ─────── TRIAGE FLOW ───────
+    const triageView = document.getElementById('triageView');
+    let triageData = null;
+    let triageIdx = 0;
+    let triageSaveTimer = null;
+
+    document.getElementById('checkinBtn').addEventListener('click', () => openTriage());
+    document.getElementById('triageClose').addEventListener('click', () => triageView.classList.add('hidden'));
+    document.getElementById('triageFinish').addEventListener('click', () => openTodoReport());
+    document.getElementById('closeTodoReport').addEventListener('click', () => document.getElementById('todoReportModal').classList.add('hidden'));
+    document.getElementById('todoCopyAll').addEventListener('click', () => copyTodoMarkdown());
+    document.getElementById('todoReportModal').addEventListener('click', e => { if (e.target.id === 'todoReportModal') e.target.classList.add('hidden'); });
+
+    function openTodoReport() {
+      const q = loadQueue();
+      const summary = document.getElementById('todoReportSummary');
+      const body = document.getElementById('todoReportBody');
+      const open = q.filter(i => !i.done);
+      const done = q.filter(i => i.done);
+      const sentCount = triageData?.responses?.filter(r => r.sent_at).length || 0;
+      const totalCount = triageData?.responses?.length || 0;
+      summary.textContent = `${sentCount}/${totalCount} check-ins sent · ${open.length} open action${open.length===1?'':'s'} · ${done.length} done`;
+
+      if (q.length === 0) {
+        body.innerHTML = `<div class="text-center text-ink-400 py-8 text-sm">No actions queued this week.</div>`;
+        document.getElementById('todoReportModal').classList.remove('hidden');
+        return;
+      }
+
+      // Group by action type (across all clients)
+      const byType = {};
+      for (const item of q) {
+        if (!byType[item.type]) byType[item.type] = [];
+        byType[item.type].push(item);
+      }
+
+      const typeLabel = {
+        meal_plan: '🍽 Meal Plans',
+        workout_adjust: '💪 Workout Adjustments',
+        adjust_targets: '📊 Target Adjustments',
+        phase_transition: '🔄 Phase Transitions',
+        schedule_call: '📞 Calls Flagged',
+        send_resource: '📎 Resources to Build',
+      };
+
+      const order = ['meal_plan', 'workout_adjust', 'adjust_targets', 'phase_transition', 'schedule_call', 'send_resource'];
+
+      body.innerHTML = order.filter(t => byType[t]?.length).map(t => `
+        <div class="border border-ink-200 rounded-xl overflow-hidden">
+          <div class="bg-ink-50 px-4 py-2 text-sm font-bold text-ink-900">${typeLabel[t] || t} <span class="text-ink-500 font-normal">· ${byType[t].length}</span></div>
+          <div class="divide-y divide-ink-100">
+            ${byType[t].map(item => `
+              <div class="p-3 ${item.done ? 'opacity-50' : ''}">
+                <label class="flex items-start gap-3 cursor-pointer">
+                  <input type="checkbox" ${item.done ? 'checked' : ''} data-todo-key="${item.key}" class="todo-check mt-1">
+                  <div class="flex-1 min-w-0">
+                    <div class="text-sm font-semibold text-ink-900 ${item.done ? 'line-through' : ''}">${escapeHtml(item.client)} — ${escapeHtml(item.title)}</div>
+                    <div class="text-xs text-ink-500 mt-0.5">${escapeHtml(item.body)}</div>
+                  </div>
+                  <button data-todo-prompt-key="${item.key}" class="todo-copy text-[11px] font-semibold px-2 py-1 bg-ink-100 text-ink-700 rounded hover:bg-ink-200 flex-shrink-0">📋 Copy prompt</button>
+                </label>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `).join('');
+
+      // Wire checkboxes
+      body.querySelectorAll('.todo-check').forEach(cb => cb.addEventListener('change', () => {
+        const q = loadQueue();
+        const idx = q.findIndex(i => i.key === cb.dataset.todoKey);
+        if (idx >= 0) {
+          q[idx].done = cb.checked;
+          saveQueue(q);
+          updateQueueBadge();
+        }
+      }));
+      body.querySelectorAll('.todo-copy').forEach(b => b.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const item = loadQueue().find(i => i.key === b.dataset.todoPromptKey);
+        if (item) {
+          navigator.clipboard.writeText(getActionPrompt(item));
+          b.textContent = '✓ Copied!';
+          setTimeout(() => b.textContent = '📋 Copy prompt', 1500);
+        }
+      }));
+
+      document.getElementById('todoReportModal').classList.remove('hidden');
+    }
+
+    function copyTodoMarkdown() {
+      const q = loadQueue().filter(i => !i.done);
+      if (q.length === 0) {
+        navigator.clipboard.writeText('No open actions this week.');
+        return;
+      }
+      const byClient = {};
+      for (const item of q) {
+        if (!byClient[item.client]) byClient[item.client] = [];
+        byClient[item.client].push(item);
+      }
+      const typeEmoji = { meal_plan: '🍽', workout_adjust: '💪', adjust_targets: '📊', phase_transition: '🔄', schedule_call: '📞', send_resource: '📎' };
+      const md = `# Tuesday Check-In To-Do · ${triageData?.date || new Date().toISOString().slice(0,10)}\n\n` +
+        Object.entries(byClient).map(([client, items]) => {
+          return `## ${client}\n` + items.map(i => `- [ ] ${typeEmoji[i.type] || '•'} **${i.title}** — ${i.body}`).join('\n');
+        }).join('\n\n');
+      navigator.clipboard.writeText(md);
+      const btn = document.getElementById('todoCopyAll');
+      btn.textContent = '✓ Copied!';
+      setTimeout(() => btn.textContent = '📋 Copy all as markdown', 1500);
+    }
+    document.getElementById('triagePrev').addEventListener('click', () => navigate(-1));
+    document.getElementById('triageSkip').addEventListener('click', () => navigate(1));
+    document.getElementById('triageHideSent').addEventListener('change', () => {
+      // If currently on a sent client and hiding sent, jump to next unsent
+      if (document.getElementById('triageHideSent').checked && triageData?.responses?.[triageIdx]?.sent_at) {
+        const nextUnsent = findNextUnsent(triageIdx, 1);
+        if (nextUnsent !== -1) { triageIdx = nextUnsent; renderCurrent(); }
+      }
+      updateSentCount();
+    });
+
+    function findNextUnsent(fromIdx, direction) {
+      if (!triageData?.responses) return -1;
+      const n = triageData.responses.length;
+      const hideSent = document.getElementById('triageHideSent').checked;
+      for (let step = 1; step <= n; step++) {
+        const i = (fromIdx + direction * step + n) % n;
+        if (!hideSent || !triageData.responses[i].sent_at) return i;
+        if ((direction > 0 && i === 0) || (direction < 0 && i === n - 1)) break; // wrapped
+      }
+      return -1;
+    }
+
+    function updateSentCount() {
+      const el = document.getElementById('triageSentCount');
+      if (!triageData?.responses) { el.textContent = ''; return; }
+      const sent = triageData.responses.filter(r => r.sent_at).length;
+      const total = triageData.responses.length;
+      el.textContent = `${sent}/${total} sent`;
+    }
+    document.getElementById('triageSaveBtn').addEventListener('click', () => saveCurrent(true));
+    document.getElementById('triageSendBtn').addEventListener('click', () => sendCurrent());
+    document.getElementById('triageRunScrape').addEventListener('click', () => runScrape());
+    document.getElementById('triageRewriteBtn').addEventListener('click', () => rewriteCurrent());
+
+    document.getElementById('triageResponse').addEventListener('input', () => {
+      const status = document.getElementById('triageSaveStatus');
+      status.textContent = 'unsaved...';
+      status.className = 'text-xs text-amber-600';
+      clearTimeout(triageSaveTimer);
+      triageSaveTimer = setTimeout(() => saveCurrent(false), 1200);
+    });
+
+    async function openTriage() {
+      triageView.classList.remove('hidden');
+      document.getElementById('triageLoading').classList.remove('hidden');
+      document.getElementById('triageClient').classList.add('hidden');
+      document.getElementById('triageEmpty').classList.add('hidden');
+
+      // Refresh the to-do cache so rec buttons reflect current state
+      await refreshTodoCache();
+      updateQueueBadge();
+      refreshTodoBadge();
+
+      const res = await fetch('/api/checkin/this-week');
+      const data = await res.json();
+      triageData = data;
+      document.getElementById('triageDate').textContent = data.date;
+      document.getElementById('triageLoading').classList.add('hidden');
+
+      if (!data.responses || data.responses.length === 0) {
+        document.getElementById('triageEmpty').classList.remove('hidden');
+        return;
+      }
+
+      // Sort: red → yellow → green → onboarding
+      const flagOrder = { red: 0, yellow: 1, green: 2, onboarding: 3, ghosting: 4 };
+      data.responses.sort((a, b) => {
+        const fa = flagOrder[a.snapshot?.flag_color] ?? 9;
+        const fb = flagOrder[b.snapshot?.flag_color] ?? 9;
+        return fa - fb;
+      });
+
+      // Skip past already-sent if hide-sent checked
+      const hideSent = document.getElementById('triageHideSent').checked;
+      triageIdx = 0;
+      if (hideSent) {
+        const firstUnsent = data.responses.findIndex(r => !r.sent_at);
+        if (firstUnsent >= 0) triageIdx = firstUnsent;
+        else {
+          alert(`All ${data.responses.length} check-ins already sent for ${data.date}! 🎉`);
+          return;
+        }
+      }
+      updateSentCount();
+      renderCurrent();
+    }
+
+    async function runScrape() {
+      const btn = document.getElementById('triageRunScrape');
+      const log = document.getElementById('triageScrapeLog');
+      btn.disabled = true;
+      btn.textContent = '⏱ Scraping...';
+      log.classList.remove('hidden');
+      log.textContent = '';
+      await streamPost('/api/checkin/scrape', null, (type, data) => {
+        if (type === 'stdout' || type === 'stderr') {
+          log.textContent += data.line + '\n';
+          log.scrollTop = log.scrollHeight;
+        } else if (type === 'exit') {
+          btn.disabled = false;
+          btn.textContent = data.code === 0 ? '✓ Done — Reopen Triage' : `✗ Exit ${data.code}`;
+          if (data.code === 0) setTimeout(() => openTriage(), 800);
+        }
+      });
+    }
+
+    function renderCurrent() {
+      const r = triageData.responses[triageIdx];
+      if (!r) return;
+      document.getElementById('triageClient').classList.remove('hidden');
+      document.getElementById('triageEmpty').classList.add('hidden');
+      document.getElementById('triageProgress').textContent = `${triageIdx + 1}/${triageData.responses.length} · ${r.name}`;
+      document.getElementById('triageName').textContent = r.name;
+
+      const flag = r.snapshot?.flag_color || 'no_data';
+      const flagBar = document.getElementById('triageFlagBar');
+      flagBar.className = `h-1.5 rounded-t-xl flag-bar-${flag}`;
+      const flagPill = document.getElementById('triageFlagPill');
+      const flagEmoji = { green: '🟢', yellow: '🟡', red: '🔴', onboarding: '🔵', ghosting: '👻', no_data: '⚪' }[flag] || '⚪';
+      flagPill.innerHTML = `${flagEmoji} ${flag}`;
+      flagPill.className = `pill bg-ink-100 text-ink-700`;
+
+      const c = r.client;
+      const meta = [];
+      if (c?.starting_weight_lbs) meta.push(`${c.starting_weight_lbs}→${c.goal_weight_lbs || '?'}lb`);
+      if (c?.daily_protein_target_g) meta.push(`${c.daily_protein_target_g}g protein`);
+      if (c?.daily_calorie_target) meta.push(`${c.daily_calorie_target} cal`);
+      if (c?.start_date) {
+        const wks = Math.floor((Date.now() - new Date(c.start_date)) / (1000 * 60 * 60 * 24 * 7));
+        const phase = Math.min(Math.floor(wks / 6) + 1, 4);
+        meta.push(`Wk ${wks} · Phase ${phase}`);
+      }
+      document.getElementById('triageMeta').textContent = meta.join(' · ') || '—';
+
+      const reasons = r.snapshot?.flag_reasons?.length ? r.snapshot.flag_reasons.join(' · ') : '';
+      document.getElementById('triageReasons').textContent = reasons;
+
+      const s = r.snapshot;
+      document.getElementById('statWO').textContent = s ? `${s.workouts_completed_this_week}/${s.workouts_scheduled_this_week || 0}` : '—';
+      document.getElementById('statLog').textContent = s ? `${s.days_logged_last_7}/7` : '—';
+      document.getElementById('statProt').textContent = s?.avg_protein_g_7d ? `${Math.round(s.avg_protein_g_7d)}g` : '—';
+      document.getElementById('statCal').textContent = s?.avg_calories_7d ? `${Math.round(s.avg_calories_7d)}` : '—';
+
+      // Answers
+      const ansEl = document.getElementById('triageAnswers');
+      const entries = Object.entries(r.answers || {});
+      if (entries.length === 0) {
+        ansEl.innerHTML = '<div class="text-ink-400 italic">No answers captured</div>';
+      } else {
+        ansEl.innerHTML = entries.map(([q, a]) => {
+          const answerText = a || '—';
+          const ctx = `Question: ${q}\nAnswer: ${answerText}`;
+          const ctxEnc = encodeURIComponent(JSON.stringify({ question: q, answer: answerText }));
+          return `
+          <div class="group">
+            <div class="text-[11px] font-semibold text-ink-500 uppercase tracking-wider mb-0.5 flex items-center justify-between">
+              <span>${escapeHtml(q)}</span>
+              <span class="opacity-0 group-hover:opacity-100 transition flex gap-1">
+                <button data-checkin-add-todo="workout" data-checkin-client="${escapeHtml(r.name)}" data-checkin-context="${ctxEnc}" class="text-[9px] px-1.5 py-0.5 bg-indigo-100 text-indigo-800 rounded hover:bg-indigo-200" title="Add Workout to-do">💪</button>
+                <button data-checkin-add-todo="calorie" data-checkin-client="${escapeHtml(r.name)}" data-checkin-context="${ctxEnc}" class="text-[9px] px-1.5 py-0.5 bg-amber-100 text-amber-800 rounded hover:bg-amber-200" title="Add Calorie to-do">🔥</button>
+                <button data-checkin-add-todo="other" data-checkin-client="${escapeHtml(r.name)}" data-checkin-context="${ctxEnc}" class="text-[9px] px-1.5 py-0.5 bg-slate-100 text-slate-800 rounded hover:bg-slate-200" title="Add Other to-do">+</button>
+              </span>
+            </div>
+            <div class="text-ink-700">${escapeHtml(answerText)}</div>
+          </div>
+        `;}).join('');
+        // Wire quick add buttons
+        ansEl.querySelectorAll('button[data-checkin-add-todo]').forEach(b => {
+          b.addEventListener('click', async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const category = b.dataset.checkinAddTodo;
+            const client_name = b.dataset.checkinClient;
+            const ctx = JSON.parse(decodeURIComponent(b.dataset.checkinContext || '%7B%7D'));
+            const defaultNote = `${ctx.question}\n→ ${ctx.answer}`;
+            const note = prompt(`Add ${category} to-do for ${client_name}:`, defaultNote);
+            if (!note || !note.trim()) return;
+            try {
+              await addTodo({ client_name, category, note: note.trim(), source: 'checkin', context: ctx });
+              await refreshTodoBadge();
+              b.textContent = '✓';
+              setTimeout(() => { b.textContent = category === 'workout' ? '💪' : category === 'calorie' ? '🔥' : '+'; }, 1500);
+            } catch (err) {
+              alert('Failed: ' + err.message);
+            }
+          });
+        });
+      }
+
+      // Recs with action buttons
+      const recsEl = document.getElementById('triageRecs');
+      if (!r.recs?.length) {
+        recsEl.innerHTML = '<div class="text-ink-400 italic">No current recommendations</div>';
+      } else {
+        recsEl.innerHTML = r.recs.slice(0, 5).map((rec, idx) => {
+          const action = classifyAction(rec);
+          const recKey = makeRecKey(r.name, rec);
+          const queued = isQueued(recKey);
+          const body = rec.body || (rec.bullets ? rec.bullets.join(' · ') : '');
+          const actionBtn = action
+            ? `<button data-action-key="${recKey}" data-action-client="${escapeHtml(r.name)}" data-action-type="${action.type}" data-action-title="${escapeHtml(rec.title)}" data-action-rec-idx="${idx}"
+                class="rec-action-btn text-[11px] font-semibold px-2 py-1 rounded ${queued ? 'bg-amber-100 text-amber-700 border border-amber-300' : action.bg} ${queued ? '' : 'text-white'} hover:opacity-90 mt-1 flex items-center gap-1">
+                ${queued ? '✓ Queued' : action.icon + ' ' + action.label}
+              </button>`
+            : (rec.action_type ? `<span class="text-[10px] text-ink-400 italic mt-1 inline-block">${rec.action_type}</span>` : '');
+          return `
+            <div class="border-l-2 ${queued ? 'border-amber-400' : 'border-ink-200'} pl-3">
+              <div class="flex items-start justify-between gap-2">
+                <div class="flex-1 min-w-0">
+                  <div class="text-xs font-bold text-ink-900">#${rec.priority} · ${escapeHtml(rec.title)}</div>
+                  <div class="text-xs text-ink-500 mt-0.5">${escapeHtml(body)}</div>
+                </div>
+              </div>
+              ${actionBtn}
+            </div>
+          `;
+        }).join('');
+        // Wire action buttons
+        recsEl.querySelectorAll('.rec-action-btn').forEach(btn => {
+          btn.addEventListener('click', () => toggleQueue(btn));
+        });
+      }
+      updateQueueBadge();
+
+      // Response
+      document.getElementById('triageResponse').value = r.response || '';
+      document.getElementById('triageSaveStatus').textContent = 'saved';
+      document.getElementById('triageSaveStatus').className = 'text-xs text-ink-400';
+      document.getElementById('triageSendLog').classList.add('hidden');
+      // Reset notes + rewrite status when switching clients
+      document.getElementById('triageNotes').value = '';
+      document.getElementById('triageRewriteStatus').classList.add('hidden');
+
+      // Sent badge + button state
+      const sentBadge = document.getElementById('triageSentBadge');
+      const sendBtn = document.getElementById('triageSendBtn');
+      if (r.sent_at) {
+        const t = new Date(r.sent_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+        sentBadge.textContent = `✓ Sent ${t}`;
+        sentBadge.classList.remove('hidden');
+        sendBtn.textContent = '↻ Resend & Next';
+        sendBtn.className = 'flex-1 bg-ink-700 text-white text-sm font-semibold px-4 py-3 rounded-lg hover:bg-ink-900';
+      } else {
+        sentBadge.classList.add('hidden');
+        sendBtn.textContent = '✓ Send & Next';
+        sendBtn.className = 'flex-1 bg-emerald-600 text-white text-sm font-semibold px-4 py-3 rounded-lg hover:bg-emerald-700';
+      }
+      updateSentCount();
+    }
+
+    async function rewriteCurrent() {
+      const r = triageData.responses[triageIdx];
+      const notes = document.getElementById('triageNotes').value.trim();
+      const btn = document.getElementById('triageRewriteBtn');
+      const status = document.getElementById('triageRewriteStatus');
+
+      btn.disabled = true;
+      btn.textContent = '⏱ Rewriting with Opus...';
+      status.classList.remove('hidden');
+      status.textContent = 'Calling Claude — usually 10-25s...';
+      status.className = 'text-xs text-amber-600 mt-2';
+
+      try {
+        const res = await fetch('/api/checkin/rewrite', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ date: triageData.date, name: r.name, notes: notes || undefined }),
+        });
+        const data = await res.json();
+        if (data.ok) {
+          document.getElementById('triageResponse').value = data.response;
+          r.response = data.response;
+          status.textContent = `✓ Rewritten · ${data.usage?.input_tokens || '?'} in / ${data.usage?.output_tokens || '?'} out tokens`;
+          status.className = 'text-xs text-emerald-600 mt-2';
+          document.getElementById('triageSaveStatus').textContent = 'saved (rewritten)';
+          document.getElementById('triageSaveStatus').className = 'text-xs text-emerald-600';
+        } else {
+          status.textContent = `✗ ${data.error || 'unknown error'}`;
+          status.className = 'text-xs text-red-600 mt-2';
+        }
+      } catch (e) {
+        status.textContent = `✗ ${e.message}`;
+        status.className = 'text-xs text-red-600 mt-2';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '✨ Regenerate with recommendations + notes';
+      }
+    }
+
+    function escapeHtml(s) {
+      return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+
+    function navigate(delta) {
+      const next = findNextUnsent(triageIdx, delta > 0 ? 1 : -1);
+      if (next === -1) {
+        // All sent
+        const hideSent = document.getElementById('triageHideSent').checked;
+        if (hideSent) {
+          alert('All check-ins sent! 🎉 (Uncheck "Hide sent" to review any.)');
+          return;
+        }
+        // Fallback: just step
+        const plain = triageIdx + delta;
+        if (plain < 0 || plain >= triageData.responses.length) return;
+        triageIdx = plain;
+      } else {
+        triageIdx = next;
+      }
+      renderCurrent();
+    }
+
+    async function saveCurrent(showFlash) {
+      const r = triageData.responses[triageIdx];
+      const text = document.getElementById('triageResponse').value;
+      r.response = text;
+      try {
+        const res = await fetch('/api/checkin/save', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ date: triageData.date, name: r.name, response: text }),
+        });
+        const status = document.getElementById('triageSaveStatus');
+        if (res.ok) {
+          status.textContent = 'saved';
+          status.className = 'text-xs text-emerald-600';
+          if (!showFlash) setTimeout(() => { status.className = 'text-xs text-ink-400'; }, 1500);
+        } else {
+          status.textContent = 'save failed';
+          status.className = 'text-xs text-red-600';
+        }
+      } catch (e) {
+        document.getElementById('triageSaveStatus').textContent = 'offline';
+      }
+    }
+
+    async function sendCurrent() {
+      const r = triageData.responses[triageIdx];
+      const sendBtn = document.getElementById('triageSendBtn');
+      const log = document.getElementById('triageSendLog');
+      log.classList.remove('hidden');
+      log.textContent = `Sending to ${r.name}...`;
+      sendBtn.disabled = true;
+      sendBtn.textContent = '⏱ Sending...';
+
+      // Save latest text first
+      await saveCurrent(false);
+
+      try {
+        const res = await fetch('/api/checkin/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ date: triageData.date, name: r.name }),
+        });
+        const data = await res.json();
+        if (data.ok) {
+          r.sent_at = data.sent_at || new Date().toISOString();
+          log.textContent = `✓ Sent to ${r.name}.\n${data.stdout || ''}`;
+          sendBtn.disabled = false;
+          updateSentCount();
+          // If all sent, auto-open to-do report; else advance
+          const remaining = triageData.responses.filter(x => !x.sent_at).length;
+          if (remaining === 0) {
+            setTimeout(() => openTodoReport(), 600);
+          } else {
+            setTimeout(() => navigate(1), 600);
+          }
+        } else {
+          log.textContent = `✗ Send failed.\nstdout: ${data.stdout || ''}\nstderr: ${data.stderr || ''}`;
+          sendBtn.disabled = false;
+        }
+      } catch (e) {
+        log.textContent = `✗ Error: ${e.message}`;
+        sendBtn.disabled = false;
+        sendBtn.textContent = '✓ Send & Next';
+      }
+    }
+
+    load();
+
+    // ─────── TABS ───────
+    function switchTab(tabName) {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('tab-active', b.dataset.tab === tabName));
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('hidden', c.dataset.tabContent !== tabName));
+      // Active Clients = main client list area (everything below tab content)
+      const clientList = document.querySelector('#stageContainer, #clientList, [data-client-list]')?.parentElement;
+      if (tabName === 'clients') {
+        document.body.classList.add('show-client-list');
+      } else {
+        document.body.classList.add('show-client-list');
+      }
+      // Toggle visibility of existing filter+grid sections (everything after tab content)
+      const main = document.querySelector('.max-w-7xl.mx-auto.px-6.py-5');
+      if (main) main.style.display = (tabName === 'clients') ? '' : 'none';
+    }
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+    });
+    // Default to macro view on load
+    setTimeout(() => switchTab('macro'), 0);
+
+    // ─────── MACRO PANELS ───────
+    const FLAG_HEX = { green: '#10b981', yellow: '#f59e0b', red: '#ef4444', onboarding: '#3b82f6', ghosting: '#64748b', no_data: '#e2e8f0' };
+    async function loadMacroPanels() {
+      try {
+        const [hRes, mRes, sRes, tRes] = await Promise.all([
+          fetch('/api/dashboard/heatmap').then(r => r.json()),
+          fetch('/api/dashboard/movers').then(r => r.json()),
+          fetch('/api/dashboard/stuck').then(r => r.json()),
+          fetch('/api/dashboard/goal-trajectory').then(r => r.json()),
+        ]);
+        renderHeatmap(hRes);
+        renderMovers(mRes);
+        renderStuck(sRes);
+        renderTrajectory(tRes);
+      } catch (e) {
+        console.warn('macro panels load failed', e);
+      }
+    }
+    function renderHeatmap({ clients, days }) {
+      const el = document.getElementById('heatmapGrid');
+      const ct = document.getElementById('heatmapCount');
+      if (!clients?.length) { el.innerHTML = '<div class="text-ink-400">No data</div>'; return; }
+      ct.textContent = `${clients.length} clients · ${days.length} days`;
+      const dayHeader = days.map(d => {
+        const [_, m, day] = d.split('-');
+        return `<th class="text-[9px] text-ink-400 font-normal text-center" style="width:20px">${m}/${day}</th>`;
+      }).join('');
+      const rows = clients.map(c => {
+        const cells = c.cells.map((v, i) => `<td><div class="heatmap-cell" style="background:${v ? FLAG_HEX[v] || '#e2e8f0' : '#f1f5f9'}" title="${days[i]}: ${v || 'no data'}"></div></td>`).join('');
+        const greenCount = c.cells.filter(v => v === 'green').length;
+        const compliance = Math.round((greenCount / c.cells.length) * 100);
+        return `<tr><td><input type="checkbox" class="batch-checkbox" data-client-id="${c.client_id}" title="Add to batch"></td><td class="heatmap-name text-ink-700 whitespace-nowrap font-medium">${c.name} <span class="text-[10px] text-ink-400 ml-1">${compliance}%</span></td>${cells}</tr>`;
+      }).join('');
+      el.innerHTML = `<table class="heatmap-table"><thead><tr><th></th><th></th>${dayHeader}</tr></thead><tbody>${rows}</tbody></table>`;
+    }
+    function renderMovers({ climbing, declining }) {
+      const el = document.getElementById('moversPanel');
+      const fmtMover = (r) => {
+        const parts = [];
+        if (r.log_delta !== 0) parts.push(`${r.log_delta > 0 ? '+' : ''}${r.log_delta}d logged`);
+        if (r.workout_delta !== 0) parts.push(`${r.workout_delta > 0 ? '+' : ''}${Math.round(r.workout_delta)}% workouts`);
+        return parts.join(' · ') || 'steady';
+      };
+      const block = (title, rows, badge) => {
+        if (!rows?.length) return '';
+        const items = rows.map(r => `
+          <div class="mover-row">
+            <span class="font-semibold text-ink-900">${r.name}</span>
+            <div class="flex items-center gap-2">
+              <span class="text-[11px] text-ink-500">${fmtMover(r)}</span>
+              <span class="mover-chip ${badge}">${badge === 'mover-up' ? '↑' : '↓'}</span>
+            </div>
+          </div>`).join('');
+        return `<div><div class="text-[10px] uppercase font-bold text-ink-400 tracking-wide mb-1.5">${title}</div>${items}</div>`;
+      };
+      el.innerHTML = block('Climbing this week', climbing, 'mover-up') + block('Slipping this week', declining, 'mover-down');
+    }
+    function renderStuck({ stuck }) {
+      const el = document.getElementById('stuckPanel');
+      if (!stuck?.length) { el.innerHTML = '<div class="text-ink-400">Nobody stuck right now ✓</div>'; return; }
+      el.innerHTML = stuck.map(s => {
+        const goalGap = s.goal_weight_lbs ? ` · ${s.goal_weight_lbs}lb goal` : '';
+        return `<div class="flex justify-between border-b border-ink-100 py-1"><span class="font-medium">${s.name}</span><span class="text-ink-400 text-[10px]">flat${goalGap}</span></div>`;
+      }).join('');
+    }
+    function renderTrajectory({ trajectories }) {
+      const el = document.getElementById('trajectoryPanel');
+      if (!trajectories?.length) { el.innerHTML = '<div class="text-ink-400 text-xs">No goal-set clients</div>'; return; }
+      const rows = trajectories.map(t => {
+        const pct = Math.max(0, Math.min(100, t.progress_pct ?? 0));
+        const proj = t.projected_hit_date || '<span class="text-ink-300">need more weigh-ins</span>';
+        const rate = t.rate_lbs_per_week !== null ? `<span class="${t.rate_lbs_per_week < 0 ? 'text-emerald-700' : 'text-rose-600'} font-semibold">${t.rate_lbs_per_week > 0 ? '+' : ''}${t.rate_lbs_per_week} lb/wk</span>` : '<span class="text-ink-400">—</span>';
+        const cur = t.current_weight ? `<b class="text-ink-900">${t.current_weight}</b>` : '<span class="text-ink-300">—</span>';
+        const paceBadge = t.on_pace ? '<span class="pace-badge pace-on">on pace</span>' : '<span class="pace-badge pace-off">off pace</span>';
+        return `<tr>
+          <td class="font-semibold text-ink-900">${t.name}</td>
+          <td class="text-ink-500"><span class="text-ink-400">${t.start_weight}</span> → ${cur} → <b>${t.goal_weight}</b></td>
+          <td>${rate}</td>
+          <td class="text-ink-700">${proj}</td>
+          <td><div class="flex items-center gap-2"><div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div><span class="text-[11px] text-ink-500 font-semibold">${pct}%</span></div></td>
+          <td>${paceBadge}</td>
+        </tr>`;
+      }).join('');
+      el.innerHTML = `<table class="traj-table"><thead><tr><th>Client</th><th>Start → Now → Goal</th><th>Rate</th><th>Projected hit</th><th>Progress</th><th>Pace</th></tr></thead><tbody>${rows}</tbody></table>`;
+    }
+    document.getElementById('refreshTrajectoryBtn')?.addEventListener('click', () => {
+      document.getElementById('trajectoryPanel').innerHTML = '<div class="text-ink-400 text-xs">Loading…</div>';
+      fetch('/api/dashboard/goal-trajectory').then(r => r.json()).then(renderTrajectory);
+    });
+    document.getElementById('macroToggle')?.addEventListener('click', () => {
+      const p = document.getElementById('macroPanels');
+      const btn = document.getElementById('macroToggle');
+      const hidden = p.classList.toggle('hidden');
+      btn.textContent = hidden ? 'Show ▼' : 'Hide ▲';
+    });
+    loadMacroPanels();
+    setInterval(loadMacroPanels, 5 * 60 * 1000); // refresh every 5min
+
+    // ─────── BATCH ACTIONS ───────
+    const batchSelected = new Set();
+    function updateBatchUI() {
+      document.getElementById('batchCount').textContent = batchSelected.size;
+      const has = batchSelected.size > 0;
+      document.getElementById('batchMealPlans').disabled = !has;
+      document.getElementById('batchNudge').disabled = !has;
+    }
+    // ─────── NUDGE FLOW (draft per client → review modal → send) ───────
+    let currentDrafts = [];
+    document.getElementById('batchNudge')?.addEventListener('click', async () => {
+      const ids = Array.from(batchSelected);
+      if (!ids.length) return;
+      const modal = document.getElementById('nudgeModal');
+      const body = document.getElementById('nudgeBody');
+      const sendBtn = document.getElementById('nudgeSendAll');
+      modal.classList.remove('hidden');
+      body.innerHTML = `<div class="text-ink-500 text-sm">Drafting ${ids.length} messages in your voice…</div>`;
+      sendBtn.disabled = true;
+      try {
+        const r = await fetch('/api/batch/nudge/draft', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ client_ids: ids }),
+        });
+        const data = await r.json();
+        currentDrafts = data.drafts || [];
+        renderNudgeDrafts();
+        document.getElementById('nudgeCount').textContent = currentDrafts.length;
+        sendBtn.disabled = currentDrafts.length === 0;
+      } catch (e) {
+        body.innerHTML = `<div class="text-rose-600 text-sm">Error: ${e.message}</div>`;
+      }
+    });
+    function renderNudgeDrafts() {
+      const body = document.getElementById('nudgeBody');
+      body.innerHTML = currentDrafts.map((d, i) => `
+        <div class="border border-ink-200 rounded-lg p-3" data-draft-idx="${i}">
+          <div class="flex items-center justify-between mb-2">
+            <span class="font-semibold text-ink-900 text-sm">${d.name}</span>
+            <button class="nudge-remove text-xs text-rose-500 hover:text-rose-700" data-idx="${i}">Skip</button>
+          </div>
+          <textarea class="nudge-textarea w-full text-sm border border-ink-200 rounded p-2 focus:outline-none focus:border-ink-500" rows="3" data-idx="${i}">${d.draft || '(draft failed, type message)'}</textarea>
+          ${d.error ? `<div class="text-[11px] text-rose-500 mt-1">${d.error}</div>` : ''}
+        </div>
+      `).join('');
+      body.querySelectorAll('.nudge-remove').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const idx = parseInt(btn.dataset.idx);
+          currentDrafts.splice(idx, 1);
+          renderNudgeDrafts();
+          document.getElementById('nudgeCount').textContent = currentDrafts.length;
+          document.getElementById('nudgeSendAll').disabled = currentDrafts.length === 0;
+        });
+      });
+      body.querySelectorAll('.nudge-textarea').forEach(ta => {
+        ta.addEventListener('input', () => {
+          const idx = parseInt(ta.dataset.idx);
+          if (currentDrafts[idx]) currentDrafts[idx].draft = ta.value;
+        });
+      });
+    }
+    document.getElementById('nudgeClose')?.addEventListener('click', () => document.getElementById('nudgeModal').classList.add('hidden'));
+    document.getElementById('nudgeCancel')?.addEventListener('click', () => document.getElementById('nudgeModal').classList.add('hidden'));
+    document.getElementById('nudgeSendAll')?.addEventListener('click', async () => {
+      const sendBtn = document.getElementById('nudgeSendAll');
+      const log = document.getElementById('batchLog');
+      const modal = document.getElementById('nudgeModal');
+      sendBtn.disabled = true;
+      sendBtn.textContent = 'Sending…';
+      log.classList.remove('hidden');
+      log.textContent = `Sending ${currentDrafts.length} nudges...\n`;
+      modal.classList.add('hidden');
+      try {
+        const r = await fetch('/api/batch/nudge', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ messages: currentDrafts.map(d => ({ client_id: d.client_id, trainerize_user_id: d.trainerize_user_id, name: d.name, message: d.draft })) }),
+        });
+        const data = await r.json();
+        if (data.results) {
+          for (const res of data.results) log.textContent += `${res.ok ? '✓' : '✗'} ${res.name}${res.error ? ' ('+res.error+')' : ''}\n`;
+          log.textContent += `\nDone. Sent ${data.results.filter(r => r.ok).length}/${data.results.length}.\n`;
+        } else {
+          log.textContent += `Error: ${data.error || 'unknown'}\n`;
+        }
+      } catch (e) {
+        log.textContent += `Error: ${e.message}\n`;
+      } finally {
+        sendBtn.disabled = false;
+        sendBtn.textContent = 'Send all';
+      }
+    });
+    document.getElementById('batchClear')?.addEventListener('click', () => {
+      batchSelected.clear();
+      document.querySelectorAll('.batch-checkbox').forEach(cb => cb.checked = false);
+      updateBatchUI();
+    });
+    document.getElementById('batchSelectAll')?.addEventListener('click', () => {
+      document.querySelectorAll('.batch-checkbox').forEach(cb => {
+        const id = cb.dataset.clientId;
+        if (id) { cb.checked = true; batchSelected.add(id); }
+      });
+      updateBatchUI();
+    });
+    document.body.addEventListener('change', (e) => {
+      if (!e.target.classList?.contains('batch-checkbox')) return;
+      const id = e.target.dataset.clientId;
+      if (!id) return;
+      if (e.target.checked) batchSelected.add(id); else batchSelected.delete(id);
+      updateBatchUI();
+    });
+    document.getElementById('batchMealPlans')?.addEventListener('click', async () => {
+      const log = document.getElementById('batchLog');
+      log.classList.remove('hidden');
+      log.textContent = `Regenerating ${batchSelected.size} meal plans...\n`;
+      try {
+        const r = await fetch('/api/batch/meal-plans', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ client_ids: Array.from(batchSelected) }),
+        });
+        const data = await r.json();
+        if (data.results) {
+          for (const res of data.results) {
+            log.textContent += `${res.ok ? '✓' : '✗'} ${res.name}\n`;
+          }
+        } else {
+          log.textContent += `Error: ${data.error || 'unknown'}\n`;
+        }
+      } catch (e) {
+        log.textContent += `Error: ${e.message}\n`;
+      }
+    });
+
+    // ─────── TO-DO LIST (Supabase-backed source of truth) ───────
+    const TODO_CATEGORIES = [
+      { key: 'workout',   label: 'Workout',    emoji: '💪', color: 'bg-indigo-100 text-indigo-800 border-indigo-300' },
+      { key: 'calorie',   label: 'Calories',   emoji: '🔥', color: 'bg-amber-100 text-amber-800 border-amber-300' },
+      { key: 'mealplan',  label: 'Meal plan',  emoji: '🍽️', color: 'bg-emerald-100 text-emerald-800 border-emerald-300' },
+      { key: 'call',      label: 'Call',       emoji: '📞', color: 'bg-rose-100 text-rose-800 border-rose-300' },
+      { key: 'bloodwork', label: 'Bloodwork',  emoji: '🩸', color: 'bg-red-100 text-red-800 border-red-300' },
+      { key: 'check-in',  label: 'Check-in',   emoji: '📝', color: 'bg-cyan-100 text-cyan-800 border-cyan-300' },
+      { key: 'other',     label: 'Other',      emoji: '✏️', color: 'bg-slate-100 text-slate-800 border-slate-300' },
+    ];
+
+    function todoCategoryStyle(cat) {
+      return TODO_CATEGORIES.find(c => c.key === cat) || TODO_CATEGORIES[TODO_CATEGORIES.length - 1];
+    }
+
+    async function fetchTodos(status = 'open') {
+      const res = await fetch(`/api/todos?status=${status}`);
+      const data = await res.json();
+      return data.todos || [];
+    }
+
+    async function addTodo({ client_name, category, note, source = 'manual', priority = 'normal', context = null }) {
+      const res = await fetch('/api/todos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ client_name, category, note, source, priority, context }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `HTTP ${res.status}`);
+      }
+      return (await res.json()).todo;
+    }
+
+    async function completeTodo(id) {
+      await fetch(`/api/todos/${id}/complete`, { method: 'POST' });
+    }
+    async function snoozeTodo(id, days = 7) {
+      await fetch(`/api/todos/${id}/snooze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ days }),
+      });
+    }
+    async function deleteTodo(id) {
+      await fetch(`/api/todos/${id}`, { method: 'DELETE' });
+    }
+
+    async function refreshTodoBadge() {
+      try {
+        const todos = await fetchTodos('open');
+        const badge = document.getElementById('todoListCount');
+        badge.textContent = todos.length;
+        badge.classList.toggle('bg-white', todos.length > 0);
+        badge.classList.toggle('text-rose-700', todos.length > 0);
+        return todos;
+      } catch (e) {
+        console.error('todo badge refresh failed', e);
+      }
+    }
+
+    function renderTodoList(todos) {
+      const body = document.getElementById('todoListBody');
+      if (!todos || todos.length === 0) {
+        body.innerHTML = '<div class="text-center text-ink-400 py-16 text-sm">No open to-dos. Use the quick-add above to get started.</div>';
+        return;
+      }
+      const byClient = {};
+      for (const t of todos) {
+        if (!byClient[t.client_name]) byClient[t.client_name] = [];
+        byClient[t.client_name].push(t);
+      }
+      body.innerHTML = Object.entries(byClient).map(([client, items]) => `
+        <div class="border border-ink-200 rounded-xl overflow-hidden mb-3">
+          <div class="bg-ink-50 px-4 py-2 text-sm font-bold text-ink-900 flex items-center justify-between">
+            <span>${escapeHtml(client)} <span class="text-ink-500 font-normal">· ${items.length}</span></span>
+          </div>
+          <div class="divide-y divide-ink-100">
+            ${items.map(item => {
+              const style = todoCategoryStyle(item.category);
+              const dateStr = new Date(item.created_at).toLocaleDateString();
+              const exStatus = item.execution_status;
+              const exBadge = exStatus
+                ? `<span class="inline-block text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${execStatusStyle(exStatus)} ml-1">${execStatusLabel(exStatus)}</span>`
+                : '';
+              return `
+                <div class="p-3" data-todo-id="${item.id}">
+                  <div class="flex items-start justify-between gap-3">
+                    <div class="flex-1 min-w-0">
+                      <span class="inline-block text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${style.color} border mb-1">${style.emoji} ${style.label}</span>
+                      ${exBadge}
+                      <span class="inline-block text-[10px] text-ink-400 ml-1">${item.source} · ${dateStr}</span>
+                      <div class="text-sm text-ink-900 mt-1 whitespace-pre-wrap">${escapeHtml(item.note)}</div>
+                      ${item.execution_result ? `<details class="mt-2"><summary class="text-[11px] text-ink-600 cursor-pointer hover:text-ink-900">Execution log</summary><div class="mt-1 p-2 bg-ink-50 rounded text-[11px] whitespace-pre-wrap font-mono">${escapeHtml(item.execution_result)}</div></details>` : ''}
+                    </div>
+                    <div class="flex flex-col gap-1 flex-shrink-0 items-end">
+                      <button data-todo-action="execute" data-todo-id="${item.id}" class="text-[11px] font-semibold px-2 py-1 bg-indigo-600 text-white rounded hover:bg-indigo-700 whitespace-nowrap">⚡ Have Claude do it</button>
+                      <button data-todo-action="draft-spec" data-todo-id="${item.id}" class="text-[11px] font-semibold px-2 py-1 bg-slate-100 text-slate-700 rounded hover:bg-slate-200 whitespace-nowrap">📋 Draft spec</button>
+                      <div class="flex gap-1">
+                        <button data-todo-action="complete" data-todo-id="${item.id}" class="text-[11px] font-semibold px-2 py-1 bg-emerald-600 text-white rounded hover:bg-emerald-700">✓ Done</button>
+                        <button data-todo-action="snooze" data-todo-id="${item.id}" class="text-[11px] font-semibold px-2 py-1 bg-amber-100 text-amber-800 rounded hover:bg-amber-200">⏰ 7d</button>
+                        <button data-todo-action="delete" data-todo-id="${item.id}" class="text-[11px] font-semibold px-2 py-1 bg-red-50 text-red-700 rounded hover:bg-red-100">✕</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+      `).join('');
+      body.querySelectorAll('button[data-todo-action]').forEach(b => {
+        b.addEventListener('click', async () => {
+          const id = b.dataset.todoId;
+          const action = b.dataset.todoAction;
+          if (action === 'complete') await completeTodo(id);
+          else if (action === 'snooze') await snoozeTodo(id, 7);
+          else if (action === 'delete') {
+            if (!confirm('Delete this to-do?')) return;
+            await deleteTodo(id);
+          }
+          else if (action === 'execute') { await executeTodoOnDashboard(id, b); }
+          else if (action === 'draft-spec') { await draftSpecOnDashboard(id, b); }
+          await openTodoList();
+          await refreshTodoBadge();
+        });
+      });
+    }
+
+    function execStatusStyle(s) {
+      return ({
+        pending: 'bg-slate-100 text-slate-700',
+        running: 'bg-indigo-100 text-indigo-700 animate-pulse',
+        completed: 'bg-emerald-100 text-emerald-700',
+        blocked: 'bg-red-100 text-red-700',
+        needs_input: 'bg-amber-100 text-amber-700',
+        failed: 'bg-red-100 text-red-700',
+      })[s] || 'bg-ink-100 text-ink-700';
+    }
+    function execStatusLabel(s) {
+      return ({
+        pending: '⏳ pending',
+        running: '⚡ running',
+        completed: '✅ executed',
+        blocked: '🚧 blocked',
+        needs_input: '⚠️ needs input',
+        failed: '❌ failed',
+      })[s] || s;
+    }
+
+    async function executeTodoOnDashboard(id, btn) {
+      const original = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = '⚡ Working...';
+      try {
+        const res = await fetch(`/api/todos/${id}/execute`, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Execution failed');
+        showExecResult(data.status, data.result);
+      } catch (e) {
+        showExecResult('failed', `❌ ${e.message}`);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = original;
+      }
+    }
+
+    function showExecResult(status, resultMd) {
+      const modal = document.getElementById('execResultModal');
+      const badge = document.getElementById('execResultStatusBadge');
+      const body = document.getElementById('execResultBody');
+      const meta = ({
+        completed: { label: '✅ COMPLETED', color: 'bg-emerald-100 text-emerald-700' },
+        blocked: { label: '🚧 BLOCKED', color: 'bg-red-100 text-red-700' },
+        needs_input: { label: '⚠️ NEEDS INPUT', color: 'bg-amber-100 text-amber-700' },
+        failed: { label: '❌ FAILED', color: 'bg-red-100 text-red-700' },
+        running: { label: '⚡ RUNNING', color: 'bg-indigo-100 text-indigo-700' },
+      })[status] || { label: status.toUpperCase(), color: 'bg-ink-100 text-ink-700' };
+      badge.textContent = meta.label;
+      badge.className = `inline-block text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded ${meta.color}`;
+      body.innerHTML = renderExecResult(resultMd || '');
+      modal.classList.remove('hidden');
+
+      // Wire copy buttons on each code block
+      body.querySelectorAll('[data-copy-block]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const code = btn.parentElement.querySelector('pre').textContent;
+          navigator.clipboard.writeText(code);
+          btn.textContent = '✓ Copied!';
+          setTimeout(() => { btn.textContent = '📋 Copy'; }, 1500);
+        });
+      });
+
+      // Copy entire result
+      const copyAll = document.getElementById('execCopyAll');
+      copyAll.onclick = () => {
+        navigator.clipboard.writeText(resultMd);
+        copyAll.textContent = '✓ Copied!';
+        setTimeout(() => { copyAll.textContent = '📋 Copy entire result'; }, 1500);
+      };
+    }
+
+    function renderExecResult(md) {
+      // Split markdown into blocks: ```code``` blocks become highlighted boxes w/ Copy btn, rest renders plain
+      const parts = [];
+      const re = /```(\w+)?\n([\s\S]*?)```/g;
+      let lastIdx = 0;
+      let m;
+      while ((m = re.exec(md)) !== null) {
+        if (m.index > lastIdx) {
+          parts.push({ type: 'text', content: md.slice(lastIdx, m.index) });
+        }
+        parts.push({ type: 'code', lang: m[1] || '', content: m[2] });
+        lastIdx = re.lastIndex;
+      }
+      if (lastIdx < md.length) parts.push({ type: 'text', content: md.slice(lastIdx) });
+
+      return parts.map(p => {
+        if (p.type === 'code') {
+          return `
+            <div class="relative bg-ink-900 text-emerald-200 rounded-lg p-4 pr-20 font-mono text-xs whitespace-pre-wrap break-words">
+              <button data-copy-block class="absolute top-2 right-2 bg-emerald-600 hover:bg-emerald-500 text-white px-2 py-1 rounded text-[10px] font-bold">📋 Copy</button>
+              <pre class="whitespace-pre-wrap break-words">${escapeHtml(p.content)}</pre>
+            </div>`;
+        }
+        const html = escapeHtml(p.content)
+          .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+          .replace(/`([^`]+)`/g, '<code class="bg-ink-100 px-1 rounded text-[11px]">$1</code>')
+          .replace(/\n/g, '<br>');
+        return `<div class="text-sm text-ink-800 leading-relaxed">${html}</div>`;
+      }).join('');
+    }
+
+    document.getElementById('closeExecResult')?.addEventListener('click', () => {
+      document.getElementById('execResultModal').classList.add('hidden');
+    });
+    document.getElementById('execResultModal')?.addEventListener('click', e => {
+      if (e.target.id === 'execResultModal') e.target.classList.add('hidden');
+    });
+
+    async function draftSpecOnDashboard(id, btn) {
+      const original = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = '📋 Drafting...';
+      try {
+        const res = await fetch(`/api/todos/${id}/draft-spec`, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Draft failed');
+        const specStr = JSON.stringify(data.spec, null, 2);
+        const edit = prompt(`Spec drafted (executable=${data.spec.executable}, confidence=${data.spec.confidence}).\n\nReview/edit the JSON, then OK to save. Cancel keeps as-is.`, specStr);
+        if (edit && edit !== specStr) {
+          try {
+            const parsed = JSON.parse(edit);
+            await fetch(`/api/todos/${id}/spec`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ spec: parsed }),
+            });
+            alert('Spec saved.');
+          } catch {
+            alert('Invalid JSON — spec not saved.');
+          }
+        }
+      } catch (e) {
+        alert('Draft failed: ' + e.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = original;
+      }
+    }
+
+    async function openTodoList() {
+      const modal = document.getElementById('todoListModal');
+      modal.classList.remove('hidden');
+      const todos = await fetchTodos('open');
+      renderTodoList(todos);
+      const summary = document.getElementById('todoListSummary');
+      const clients = new Set(todos.map(t => t.client_name));
+      summary.textContent = `${todos.length} open · ${clients.size} clients`;
+      populateTodoClientPicker();
+    }
+
+    async function populateTodoClientPicker() {
+      const sel = document.getElementById('todoAddClient');
+      if (sel.children.length > 1) return; // only populate once
+      try {
+        // Pull from /api/checkin/this-week + window.dashboardClients if available; fall back to triageData
+        const res = await fetch('/api/todos?status=all');
+        const allTodos = (await res.json()).todos || [];
+        const known = new Set(allTodos.map(t => t.client_name));
+        // also seed from the loaded grid clients
+        const gridNames = Array.from(document.querySelectorAll('[data-client-name]')).map(el => el.dataset.clientName);
+        gridNames.forEach(n => known.add(n));
+        const sorted = Array.from(known).filter(Boolean).sort();
+        for (const name of sorted) {
+          const opt = document.createElement('option');
+          opt.value = name; opt.textContent = name;
+          sel.appendChild(opt);
+        }
+      } catch (e) {
+        console.error('client picker populate failed', e);
+      }
+    }
+
+    // Wire to-do header button + modal close
+    document.getElementById('todoListBtn').addEventListener('click', () => openTodoList());
+    document.getElementById('closeTodoList').addEventListener('click', () => {
+      document.getElementById('todoListModal').classList.add('hidden');
+    });
+    document.getElementById('todoListModal').addEventListener('click', e => {
+      if (e.target.id === 'todoListModal') e.target.classList.add('hidden');
+    });
+
+    // Quick-add form handler
+    document.getElementById('todoAddBtn').addEventListener('click', async () => {
+      const client_name = document.getElementById('todoAddClient').value.trim();
+      const category = document.getElementById('todoAddCategory').value;
+      const note = document.getElementById('todoAddNote').value.trim();
+      const errEl = document.getElementById('todoAddError');
+      errEl.textContent = '';
+      if (!client_name) return errEl.textContent = 'Pick a client';
+      if (!note) return errEl.textContent = 'Note is required';
+      try {
+        await addTodo({ client_name, category, note, source: 'manual' });
+        document.getElementById('todoAddNote').value = '';
+        await openTodoList();
+        await refreshTodoBadge();
+      } catch (e) {
+        errEl.textContent = e.message;
+      }
+    });
+
+    // Category preset buttons
+    document.querySelectorAll('[data-todo-preset]').forEach(b => {
+      b.addEventListener('click', () => {
+        const cat = b.dataset.todoPreset;
+        document.getElementById('todoAddCategory').value = cat;
+        document.getElementById('todoAddNote').focus();
+      });
+    });
+
+    // Goal-sync button — generates per-client to-dos based on goal trajectory
+    document.getElementById('goalSyncBtn')?.addEventListener('click', async () => {
+      const btn = document.getElementById('goalSyncBtn');
+      const status = document.getElementById('goalSyncStatus');
+      btn.disabled = true;
+      const original = btn.innerHTML;
+      btn.innerHTML = '⏳ Analyzing roster... (~60s)';
+      status.classList.remove('hidden');
+      status.textContent = 'Running 8 clients in parallel. ~60s for full roster of 65...';
+      try {
+        // 10 min timeout (well above expected 60s)
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10 * 60 * 1000);
+        const res = await fetch('/api/todos/generate-from-goals', { method: 'POST', signal: controller.signal });
+        clearTimeout(timeoutId);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Goal sync failed');
+        const created = data.created?.length || 0;
+        const skipped = data.skipped?.length || 0;
+        const errors = data.errors?.length || 0;
+        const lines = [
+          `✅ Goal sync complete`,
+          ``,
+          `${created} new to-do${created === 1 ? '' : 's'} (off-track clients)`,
+          `${skipped} skipped (on track or no data)`,
+          errors ? `${errors} errors` : null,
+        ].filter(Boolean).join('\n');
+        const newRecs = (data.created || []).slice(0, 10).map(c => `• ${c.client} [${c.category}] — ${c.summary}`).join('\n');
+        alert(`${lines}\n\n${newRecs || 'All clients on track 🎉'}`);
+        await openTodoList();
+        await refreshTodoBadge();
+      } catch (e) {
+        alert('Goal sync failed: ' + e.message);
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = original;
+        status.classList.add('hidden');
+      }
+    });
+
+    refreshTodoBadge();
+    setInterval(refreshTodoBadge, 60000);
+
+    // ─────── PENDING ONBOARDINGS ───────
+    async function refreshOnboardingsBadge() {
+      try {
+        const res = await fetch('/api/intake/pending');
+        const data = await res.json();
+        const count = (data.pending || []).filter(p => ['ready_for_review', 'needs_review'].includes(p.status)).length;
+        document.getElementById('onboardingsCount').textContent = count;
+        const btn = document.getElementById('onboardingsBtn');
+        if (count > 0) btn.classList.add('animate-pulse');
+        else btn.classList.remove('animate-pulse');
+      } catch {}
+    }
+
+    async function openOnboardings() {
+      const modal = document.getElementById('onboardingsModal');
+      modal.classList.remove('hidden');
+      const body = document.getElementById('onboardingsBody');
+      body.innerHTML = '<div class="text-center text-ink-400 py-8 text-sm">Loading…</div>';
+      try {
+        const res = await fetch('/api/intake/pending');
+        const data = await res.json();
+        renderOnboardings(data.pending || []);
+      } catch (e) {
+        body.innerHTML = `<div class="text-red-600 text-sm">Failed: ${e.message}</div>`;
+      }
+    }
+
+    function renderOnboardings(rows) {
+      const body = document.getElementById('onboardingsBody');
+      const summary = document.getElementById('onboardingsSummary');
+      const review = rows.filter(r => ['ready_for_review', 'needs_review'].includes(r.status));
+      summary.textContent = `${review.length} pending review · ${rows.length} total`;
+      if (rows.length === 0) {
+        body.innerHTML = '<div class="text-center text-ink-400 py-16 text-sm">No pending onboardings. New intake submissions will appear here.</div>';
+        return;
+      }
+      body.innerHTML = rows.map(row => renderOnboardingCard(row)).join('');
+      body.querySelectorAll('[data-onboard-action]').forEach(btn => {
+        btn.addEventListener('click', () => handleOnboardingAction(btn));
+      });
+    }
+
+    function renderOnboardingCard(r) {
+      const intake = r.intake_submissions || {};
+      const macros = r.computed_macros || {};
+      const split = r.selected_split || {};
+      const statusBadge = ({
+        ready_for_review: { label: '✨ READY FOR REVIEW', color: 'bg-violet-100 text-violet-800 border-violet-300' },
+        needs_review: { label: '⚠️ HUMAN REVIEW REQUIRED', color: 'bg-amber-100 text-amber-800 border-amber-300' },
+        failed: { label: '❌ FAILED', color: 'bg-red-100 text-red-800 border-red-300' },
+        approved: { label: '✅ APPROVED', color: 'bg-emerald-100 text-emerald-800 border-emerald-300' },
+        monday_doc_written: { label: '📝 DOC WRITTEN', color: 'bg-slate-100 text-slate-800 border-slate-300' },
+      })[r.status] || { label: r.status, color: 'bg-ink-100 text-ink-800 border-ink-300' };
+      const flagBadges = (r.flags || []).map(f => `<span class="inline-block text-[10px] px-2 py-0.5 bg-amber-100 text-amber-800 rounded border border-amber-300 mr-1">${f}</span>`).join('');
+      const mondayLink = r.monday_item_id ? `https://faerberfitnesss-team-company.monday.com/boards/8896739421/pulses/${r.monday_item_id}` : null;
+
+      return `
+        <div class="border border-ink-200 rounded-xl overflow-hidden bg-white" data-onboard-id="${r.id}">
+          <div class="px-5 py-4 bg-gradient-to-r from-violet-50 to-ink-50 border-b border-ink-200">
+            <div class="flex items-start justify-between gap-4">
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2 mb-1">
+                  <span class="inline-block text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded border ${statusBadge.color}">${statusBadge.label}</span>
+                  ${flagBadges}
+                </div>
+                <h3 class="text-lg font-bold text-ink-900">${escapeHtml(r.client_name)}</h3>
+                <div class="text-xs text-ink-500 mt-0.5">${escapeHtml(r.client_email)} · Trainerize: ${r.trainerize_user_id || '—'}</div>
+              </div>
+              <div class="flex gap-2 flex-shrink-0">
+                <button data-onboard-action="view" data-onboard-id="${r.id}" class="text-xs font-semibold bg-white border border-ink-300 text-ink-900 px-3 py-1.5 rounded-lg hover:bg-ink-50">View details</button>
+                ${mondayLink ? `<a href="${mondayLink}" target="_blank" class="text-xs font-semibold bg-white border border-ink-300 text-ink-900 px-3 py-1.5 rounded-lg hover:bg-ink-50">Monday →</a>` : ''}
+                ${r.status === 'ready_for_review' || r.status === 'needs_review' ? `<button data-onboard-action="approve" data-onboard-id="${r.id}" class="text-xs font-semibold bg-emerald-600 text-white px-3 py-1.5 rounded-lg hover:bg-emerald-700">✓ Approve + push workouts</button>` : ''}
+                <button data-onboard-action="delete" data-onboard-id="${r.id}" class="text-xs font-semibold bg-red-50 text-red-700 border border-red-200 px-3 py-1.5 rounded-lg hover:bg-red-100">🗑 Delete</button>
+              </div>
+            </div>
+          </div>
+          <div class="px-5 py-4 grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <div class="text-[10px] font-bold uppercase tracking-wider text-ink-500 mb-1">Macros</div>
+              <div class="text-sm">
+                <div class="font-bold text-ink-900">${macros.caloricGoal || '—'} cal</div>
+                <div class="text-xs text-ink-600">${macros.proteinGrams || '—'}g P · ${macros.carbsGrams || '—'}g C · ${macros.fatGrams || '—'}g F</div>
+                <div class="text-[10px] text-ink-400 mt-1">BMR ${macros.bmr || '—'} · TDEE ${macros.tdee || '—'} · deficit ${macros.deficit ?? '—'}</div>
+              </div>
+            </div>
+            <div>
+              <div class="text-[10px] font-bold uppercase tracking-wider text-ink-500 mb-1">Workout split</div>
+              <div class="text-sm">
+                <div class="font-bold text-ink-900">${escapeHtml(split.split_name || '—')}</div>
+                <div class="text-xs text-ink-600">${split.days_per_week || '—'} days · ${escapeHtml(split.equipment_tier || '—')}</div>
+                <div class="text-[10px] text-ink-400 mt-1">${escapeHtml(split.schedule_pattern || '—')}</div>
+              </div>
+            </div>
+            <div>
+              <div class="text-[10px] font-bold uppercase tracking-wider text-ink-500 mb-1">Goal + timeline</div>
+              <div class="text-sm">
+                <div class="font-bold text-ink-900">${intake.weight_lb || '—'} → ${intake.goal_weight_lb || '—'} lb</div>
+                <div class="text-xs text-ink-600">${escapeHtml(intake.goal_type || '—')} by ${escapeHtml(intake.deadline || '—')}</div>
+                <div class="text-[10px] text-ink-400 mt-1">Starts: ${escapeHtml(r.starts_on || '—')}</div>
+              </div>
+            </div>
+          </div>
+          ${r.review_reason ? `<div class="px-5 py-3 bg-amber-50 border-t border-amber-200 text-xs text-amber-900"><strong>Review reason:</strong> ${escapeHtml(r.review_reason)}</div>` : ''}
+        </div>
+      `;
+    }
+
+    async function handleOnboardingAction(btn) {
+      const id = btn.dataset.onboardId;
+      const action = btn.dataset.onboardAction;
+      if (action === 'view') {
+        await openOnboardingDetail(id);
+      } else if (action === 'approve') {
+        if (!confirm('Approve this onboarding and push workouts to Trainerize?')) return;
+        btn.disabled = true;
+        btn.textContent = '⏳ Approving...';
+        try {
+          const res = await fetch(`/api/intake/pending/${id}/approve`, { method: 'POST' });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || 'Approve failed');
+          // Show post-approve to-do picker
+          const row = (await (await fetch('/api/intake/pending')).json()).pending.find(r => String(r.id) === String(id));
+          openPostApproveTodos(id, row?.client_name || 'this client');
+        } catch (e) {
+          alert('Approve failed: ' + e.message);
+          btn.disabled = false;
+          btn.textContent = '✓ Approve + push workouts';
+        }
+      } else if (action === 'delete') {
+        if (!confirm('Delete this client from Coach OS + Trainerize + Monday? This cannot be undone.')) return;
+        btn.disabled = true;
+        btn.textContent = '🗑 Deleting...';
+        try {
+          const res = await fetch(`/api/intake/pending/${id}`, { method: 'DELETE' });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || 'Delete failed');
+          const errSuffix = data.errors?.length ? `\n\nWarnings:\n${data.errors.join('\n')}` : '';
+          alert(`🗑 Deleted ${data.deletedId} (Trainerize + Monday + Supabase).${errSuffix}`);
+          await openOnboardings();
+          await refreshOnboardingsBadge();
+        } catch (e) {
+          alert('Delete failed: ' + e.message);
+        }
+      }
+    }
+
+    async function reloadOnboardingDetail(id) {
+      const res = await fetch('/api/intake/pending');
+      const data = await res.json();
+      return (data.pending || []).find(r => String(r.id) === String(id));
+    }
+    async function openOnboardingDetail(id) {
+      const row = await reloadOnboardingDetail(id);
+      if (!row) return;
+      const intake = row.intake_submissions || {};
+      const split = row.selected_split || {};
+      const macros = row.computed_macros || {};
+      document.getElementById('onboardingDetailName').textContent = row.client_name;
+      const body = document.getElementById('onboardingDetailBody');
+      // Find latest regen log entry to surface as a banner
+      const regenLog = (row.pipeline_log || []).filter(e => e.step === 'regenerated_with_notes').slice(-1)[0];
+      const regenBanner = regenLog
+        ? `<div class="bg-emerald-50 border border-emerald-300 rounded-lg p-3 text-xs text-emerald-900"><strong>✅ Regenerated</strong> · ${escapeHtml((regenLog.notes || '').slice(0, 180))}</div>`
+        : '';
+      body.innerHTML = `
+        ${regenBanner}
+        <div class="grid grid-cols-2 gap-4">
+          <div><strong>Email:</strong> ${escapeHtml(intake.email || row.client_email)}</div>
+          <div><strong>Trainerize ID:</strong> ${row.trainerize_user_id || '—'}</div>
+          <div><strong>Goal:</strong> ${escapeHtml(intake.goal_type || '—')} · ${intake.weight_lb}→${intake.goal_weight_lb}lb by ${escapeHtml(intake.deadline || '—')}</div>
+          <div><strong>Starts on:</strong> ${escapeHtml(row.starts_on || '—')}</div>
+        </div>
+        <div class="border-t border-ink-200 pt-4">
+          <div class="text-[10px] font-bold uppercase tracking-wider text-ink-500 mb-2">MACROS (auto-computed)</div>
+          <div class="font-mono text-xs bg-ink-50 p-3 rounded">${macros.caloricGoal || '—'} cal / ${macros.proteinGrams || '—'}P / ${macros.carbsGrams || '—'}C / ${macros.fatGrams || '—'}F · BMR ${macros.bmr || '—'} · TDEE ${macros.tdee || '—'} · activity used ${macros.activity_used || '—'} (declared ${escapeHtml(macros.declared_activity || '—')})</div>
+        </div>
+        <div class="border-t border-ink-200 pt-4">
+          <div class="text-[10px] font-bold uppercase tracking-wider text-ink-500 mb-2">WORKOUT SPLIT</div>
+          <div class="font-bold mb-1">${escapeHtml(split.split_name || '—')} (${split.days_per_week || '—'} days, ${escapeHtml(split.equipment_tier || '—')})</div>
+          <div class="text-xs text-ink-600 mb-2">Schedule: ${escapeHtml(split.schedule_pattern || '—')} · Intensity: ${escapeHtml(split.intensity || '—')}</div>
+          <ul class="text-xs space-y-1 mb-2">${(split.split_breakdown || []).map(d => `<li class="pl-3 border-l-2 border-violet-300">${escapeHtml(d)}</li>`).join('')}</ul>
+          ${split.injury_swaps?.length ? `<div class="text-[10px] font-bold uppercase tracking-wider text-amber-700 mt-3 mb-1">INJURY SWAPS</div><ul class="text-xs space-y-1">${split.injury_swaps.map(s => `<li class="pl-3 border-l-2 border-amber-300">${escapeHtml(s)}</li>`).join('')}</ul>` : ''}
+          <div class="text-[11px] text-ink-500 mt-2 italic">${escapeHtml(split.rationale || '')}</div>
+        </div>
+        <div class="border-t border-ink-200 pt-4">
+          <div class="text-[10px] font-bold uppercase tracking-wider text-ink-500 mb-2">INTAKE ANSWERS</div>
+          <details class="text-xs"><summary class="cursor-pointer text-violet-700 font-semibold">View full intake (click to expand)</summary>
+            <div class="mt-2 p-3 bg-ink-50 rounded space-y-2">
+              <div><strong>Why now:</strong> ${escapeHtml(intake.why_now || row.intake_submissions?.why_now || '—')}</div>
+              <div><strong>Equipment:</strong> ${escapeHtml(row.intake_submissions?.equipment || '—')}</div>
+              <div><strong>Injuries:</strong> ${escapeHtml(row.intake_submissions?.injuries || '—')}</div>
+              <div><strong>Flags:</strong> ${(row.flags || []).join(', ') || 'none'}</div>
+              <div><strong>Meds + supps:</strong> ${escapeHtml(row.intake_submissions?.meds || '—')}</div>
+            </div>
+          </details>
+        </div>
+        <div class="border-t border-ink-200 pt-4">
+          <div class="text-[10px] font-bold uppercase tracking-wider text-violet-700 mb-2">🛠 COACH OVERRIDES — TWEAK BEFORE APPROVAL</div>
+          <textarea id="regenNotes" rows="3" class="w-full text-sm px-3 py-2 border border-violet-300 rounded-lg focus:outline-none focus:border-violet-500" placeholder="e.g. 'Cap at 3-4 days/wk to start' or 'No smith machine, switch to DB-only' or 'Drop calories by 100 — he says he gains easy' or 'Add core work each day'"></textarea>
+          <button id="regenBtn" data-pending-id="${row.id}" class="mt-2 text-xs font-semibold bg-violet-600 text-white px-4 py-2 rounded-lg hover:bg-violet-700">🔄 Regenerate split + macros w/ these notes</button>
+          <div id="regenStatus" class="text-xs text-ink-500 mt-1 hidden"></div>
+        </div>
+        <div class="border-t border-ink-200 pt-4">
+          <div class="text-[10px] font-bold uppercase tracking-wider text-ink-500 mb-2">PIPELINE LOG</div>
+          <div class="font-mono text-[10px] bg-ink-50 p-3 rounded space-y-1">
+            ${(row.pipeline_log || []).map(e => `<div>${e.at?.slice(11, 19) || ''} · ${escapeHtml(e.step)}</div>`).join('')}
+          </div>
+        </div>
+      `;
+      document.getElementById('onboardingDetailModal').classList.remove('hidden');
+
+      // Wire regenerate button
+      const regenBtn = document.getElementById('regenBtn');
+      if (regenBtn) regenBtn.addEventListener('click', async () => {
+        const notes = document.getElementById('regenNotes').value.trim();
+        const statusEl = document.getElementById('regenStatus');
+        if (!notes) { alert('Add a note first.'); return; }
+        const pendingId = regenBtn.dataset.pendingId;
+        regenBtn.disabled = true;
+        regenBtn.textContent = '⏳ Regenerating...';
+        statusEl.classList.remove('hidden');
+        statusEl.textContent = 'Calling Sonnet w/ your overrides (10-15s)...';
+        try {
+          const res = await fetch(`/api/intake/pending/${pendingId}/regenerate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ notes }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || 'Regen failed');
+          statusEl.className = 'text-xs text-emerald-700 mt-1 font-bold';
+          statusEl.textContent = `✅ Updated: ${data.split.split_name} (${data.split.days_per_week}d) · ${data.macros.caloricGoal} cal / ${data.macros.proteinGrams}P — re-rendering...`;
+          // Force full close + reopen for clean redraw
+          await new Promise(r => setTimeout(r, 1500));
+          document.getElementById('onboardingDetailModal').classList.add('hidden');
+          await new Promise(r => setTimeout(r, 200));
+          openOnboardingDetail(pendingId);
+        } catch (e) {
+          statusEl.className = 'text-xs text-red-700 mt-1';
+          statusEl.textContent = `❌ ${e.message}`;
+        } finally {
+          regenBtn.disabled = false;
+          regenBtn.textContent = '🔄 Regenerate split + macros w/ these notes';
+        }
+      });
+    }
+
+    document.getElementById('onboardingsBtn')?.addEventListener('click', openOnboardings);
+    document.getElementById('closeOnboardings')?.addEventListener('click', () => document.getElementById('onboardingsModal').classList.add('hidden'));
+    document.getElementById('onboardingsModal')?.addEventListener('click', e => { if (e.target.id === 'onboardingsModal') e.target.classList.add('hidden'); });
+    // ─── POST-APPROVE TO-DO PICKER ───
+    const POST_APPROVE_PRESETS = [
+      { category: 'mealplan',  emoji: '🍽️', label: 'Build meal plan',  note: 'Build meal plan using Bella template + auto-macros from intake. Save to ~/Downloads + upload to Trainerize.', checked: true,  priority: 'high' },
+      { category: 'bloodwork', emoji: '🩸', label: 'Bloodwork (Wk 3)',           note: 'Send lab slip Wk 2 → blood draw Wk 3 → Bloodwork PDF Wk 4-5.',                                                checked: false, priority: 'normal' },
+      { category: 'call',      emoji: '📞', label: 'Book onboarding call',       note: 'Send Trainerize message w/ booking link: https://go.faerberfitness.com/widget/bookings/15zf',                checked: true,  priority: 'high' },
+      { category: 'other',     emoji: '💳', label: 'Set up payment',             note: 'Confirm Trainerize Pay / Stripe / GHL payment configured for this client.',                                  checked: false, priority: 'normal' },
+      { category: 'check-in',  emoji: '👋', label: 'Send Day-0 welcome message', note: 'Send a quick warm welcome message in Trainerize: "You\\u2019re in. Workouts + macros are live. Hit me with any questions."', checked: true,  priority: 'normal' },
+      { category: 'other',     emoji: '📸', label: 'Ask for starting photos',   note: 'Send Trainerize message requesting front / side / back starting photos.',                                       checked: false, priority: 'normal' },
+    ];
+    let postApprovePendingId = null;
+
+    function openPostApproveTodos(pendingId, clientName) {
+      postApprovePendingId = pendingId;
+      document.getElementById('postApproveClientName').textContent = clientName;
+      const body = document.getElementById('postApproveBody');
+      body.innerHTML = POST_APPROVE_PRESETS.map((p, i) => `
+        <label class="flex items-start gap-3 p-3 border border-ink-200 rounded-lg cursor-pointer hover:border-emerald-400 hover:bg-emerald-50 transition">
+          <input type="checkbox" data-preset-i="${i}" ${p.checked ? 'checked' : ''} class="mt-1 w-4 h-4 accent-emerald-600 cursor-pointer">
+          <div class="flex-1">
+            <div class="font-semibold text-sm text-ink-900">${p.emoji} ${p.label}</div>
+            <div class="text-xs text-ink-500 mt-0.5">${p.note.length > 100 ? p.note.slice(0, 100) + '…' : p.note}</div>
+          </div>
+          <span class="text-[10px] font-bold uppercase px-2 py-1 rounded ${p.priority === 'high' ? 'bg-rose-100 text-rose-700' : 'bg-ink-100 text-ink-700'}">${p.priority}</span>
+        </label>
+      `).join('') + `
+        <div class="mt-3 pt-3 border-t border-ink-200">
+          <label class="block text-xs font-bold uppercase text-ink-500 tracking-wider mb-1">Add custom to-do (optional)</label>
+          <input id="postApproveCustom" type="text" placeholder="e.g. Pull bloods from Quest portal once results land" class="w-full text-sm px-3 py-2 border border-ink-200 rounded-lg focus:outline-none focus:border-emerald-500">
+        </div>
+      `;
+      document.getElementById('postApproveModal').classList.remove('hidden');
+    }
+
+    document.getElementById('postApproveSkip')?.addEventListener('click', async () => {
+      document.getElementById('postApproveModal').classList.add('hidden');
+      await openOnboardings();
+      await refreshOnboardingsBadge();
+      await refreshTodoBadge();
+    });
+    document.getElementById('postApproveConfirm')?.addEventListener('click', async () => {
+      const checked = Array.from(document.querySelectorAll('[data-preset-i]:checked'));
+      const customText = document.getElementById('postApproveCustom')?.value.trim();
+      const todos = checked.map(el => {
+        const i = Number(el.dataset.presetI);
+        return { category: POST_APPROVE_PRESETS[i].category, note: POST_APPROVE_PRESETS[i].note, priority: POST_APPROVE_PRESETS[i].priority };
+      });
+      if (customText) todos.push({ category: 'other', note: customText, priority: 'normal' });
+      if (todos.length === 0) {
+        document.getElementById('postApproveModal').classList.add('hidden');
+        return;
+      }
+      try {
+        const res = await fetch(`/api/intake/pending/${postApprovePendingId}/spawn-todos`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ todos }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Spawn failed');
+        alert(`✅ Created ${data.created} to-do${data.created === 1 ? '' : 's'}. Check your To-Do list.`);
+      } catch (e) {
+        alert('To-do creation failed: ' + e.message);
+      }
+      document.getElementById('postApproveModal').classList.add('hidden');
+      await openOnboardings();
+      await refreshOnboardingsBadge();
+      await refreshTodoBadge();
+    });
+    document.getElementById('postApproveModal')?.addEventListener('click', e => { if (e.target.id === 'postApproveModal') e.target.classList.add('hidden'); });
+
+    document.getElementById('closeOnboardingDetail')?.addEventListener('click', () => document.getElementById('onboardingDetailModal').classList.add('hidden'));
+    document.getElementById('onboardingDetailModal')?.addEventListener('click', e => { if (e.target.id === 'onboardingDetailModal') e.target.classList.add('hidden'); });
+
+    refreshOnboardingsBadge();
+    setInterval(refreshOnboardingsBadge, 30000);
+  </script>
+</body>
+</html>

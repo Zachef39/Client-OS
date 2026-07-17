@@ -1,0 +1,19 @@
+# Railway build + deploy config for Faerber Client OS server.
+# Env vars (SUPABASE_URL, MONDAY_API_TOKEN, STRIPE_SK_*, etc) live in the Railway
+# dashboard — never commit them here. See .env.example for the full list.
+
+[build]
+builder = "nixpacks"
+
+[build.nixpacksPlan.phases.setup]
+nixPkgs = ["nodejs_20"]
+
+[build.nixpacksPlan.phases.install]
+cmds = ["cd server && npm ci --omit=dev || npm install --omit=dev"]
+
+[deploy]
+startCommand = "node server/server.js"
+restartPolicyType = "always"
+restartPolicyMaxRetries = 10
+healthcheckPath = "/api/health"
+healthcheckTimeout = 30

@@ -1,0 +1,45 @@
+# Deps
+node_modules/
+**/node_modules/
+
+# Env — never commit real values
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+logs/
+
+# OS junk
+.DS_Store
+._*
+Thumbs.db
+
+# Python (local Mac wrapper)
+.venv/
+.venv.broken-py314/
+__pycache__/
+*.pyc
+*.pyo
+
+# Local-only scratch (LOCAL_ONLY paths — never runs in cloud)
+# NOTE: stage-overrides.json is intentionally committed (server writes to it,
+# starts as {}). On Railway the container is ephemeral so writes won't persist —
+# migrate this to Supabase before relying on stage overrides in the cloud.
+_*.mjs
+extract_goal_weights.*.jsonl
+extract_goal_weights.*.csv
+extract_goals_from_intake_md.*.jsonl
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Local screenshots / test output
+*.png
+!dashboard/**/*.png

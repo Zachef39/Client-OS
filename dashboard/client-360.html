@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Client 360 · Faerber Client OS</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ff-primary: #005d93;
+    --ff-secondary: #135982;
+    --ff-tertiary: #275570;
+    --ff-quaternary: #3a515e;
+    --ff-neutral: #4d4d4d;
+  }
+  body { font-family: 'Inter', system-ui, sans-serif; }
+  .risk-critical { background: #fee2e2; color: #991b1b; }
+  .risk-high     { background: #fed7aa; color: #9a3412; }
+  .risk-medium   { background: #fef3c7; color: #92400e; }
+  .risk-low      { background: #d1fae5; color: #065f46; }
+  .flag-red    { background:#ef4444; color:#fff; }
+  .flag-yellow { background:#f59e0b; color:#fff; }
+  .flag-green  { background:#10b981; color:#fff; }
+  .sev-critical { background:#dc2626; color:#fff; }
+  .sev-high { background:#ea580c; color:#fff; }
+  .sev-normal { background:#0284c7; color:#fff; }
+  .sev-low { background:#65a30d; color:#fff; }
+  .conv-inbound { background: #eff6ff; border-left: 3px solid #3b82f6; }
+  .conv-outbound { background: #f5f3ff; border-left: 3px solid #8b5cf6; }
+  .win-quotable { background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); }
+</style>
+</head>
+<body class="bg-slate-50 text-slate-800 pb-32">
+<div class="max-w-6xl mx-auto px-6 pt-8">
+  <a href="/" class="text-sm text-sky-700 hover:underline">← Back to dashboard</a>
+  <h1 class="text-3xl font-bold mt-3 mb-1" style="color: var(--ff-primary)" id="clientName">Loading…</h1>
+  <div class="text-slate-500 text-sm" id="clientSub"></div>
+</div>
+
+<div class="max-w-6xl mx-auto px-6 mt-6" id="content"></div>
+
+<script type="module">
+const SUPABASE_URL = 'https://sfuvqaoeuajsrvldoiek.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_fRb1TIgDRxvkXFskGIMsnA_QikUcw9U';
+const H = { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` };
+
+const params = new URLSearchParams(location.search);
+let clientId = params.get('id');
+const clientName = params.get('name');
+
+async function sb(path, query = {}) {
+  const url = new URL(`${SUPABASE_URL}/rest/v1${path}`);
+  for (const [k, v] of Object.entries(query)) url.searchParams.set(k, v);
+  const r = await fetch(url, { headers: H });
+  if (!r.ok) throw new Error(`${path}: ${r.status}`);
+  return r.json();
+}
+
+async function resolveClientId() {
+  if (clientId) return clientId;
+  if (clientName) {
+    const rows = await sb('/clients', { select: 'id,full_name', full_name: `ilike.%${clientName}%`, limit: '1' });
+    if (rows.length) return rows[0].id;
+  }
+  return null;
+}
+
+function esc(s) { return String(s ?? '').replace(/[<>&"']/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c])); }
+function fmtDate(d) { if (!d) return '—'; return new Date(d).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' }); }
+function fmtDateTime(d) { if (!d) return '—'; return new Date(d).toLocaleString('en-US', { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' }); }
+function money(n) { if (n == null) return '—'; return '$' + Number(n).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}); }
+
+async function render() {
+  const id = await resolveClientId();
+  if (!id) {
+    document.getElementById('content').innerHTML = `<div class="text-red-600">Client not found. Pass ?id=&lt;uuid&gt; or ?name=&lt;name&gt;</div>`;
+    return;
+  }
+  clientId = id;
+
+  const [client] = await sb('/clients', { select: '*', id: `eq.${id}`, limit: '1' });
+  if (!client) return;
+  document.getElementById('clientName').textContent = client.full_name;
+  document.getElementById('clientSub').textContent =
+    `${client.trainerize_user_id ? 'Trainerize #' + client.trainerize_user_id : ''} · Started ${fmtDate(client.start_date)} · ${client.is_active ? '✓ active' : '✗ inactive'}${client.is_internal ? ' · INTERNAL' : ''}${client.potential_duplicate_of ? ' · DUPLICATE' : ''}`;
+
+  // parallel fetches
+  const [churn, billing, goals, rules, tags, wins, snap, checkin, calls, convCounts, recentConv] = await Promise.all([
+    sb('/client_churn_risk', { select: '*', client_id: `eq.${id}`, order: 'scored_at.desc', limit: '1' }).then(r => r[0] || null),
+    sb('/client_billing', { select: '*', client_id: `eq.${id}`, limit: '1' }).then(r => r[0] || null),
+    sb('/client_goals', { select: '*', client_id: `eq.${id}`, status: 'eq.active' }),
+    sb('/client_rules', { select: '*', client_id: `eq.${id}`, active: 'eq.true', order: 'severity.desc' }),
+    sb('/client_tags', { select: '*', client_id: `eq.${id}` }),
+    sb('/client_wins', { select: '*', client_id: `eq.${id}`, order: 'win_date.desc', limit: '20' }),
+    sb('/daily_snapshots', { select: '*', client_id: `eq.${id}`, order: 'snapshot_date.desc', limit: '1' }).then(r => r[0] || null),
+    sb('/weekly_checkins', { select: '*', client_id: `eq.${id}`, order: 'checkin_date.desc', limit: '1' }).then(r => r[0] || null),
+    sb('/client_calls', { select: '*', client_id: `eq.${id}`, order: 'call_date.desc', limit: '10' }),
+    sb('/client_conversations', { select: 'id', client_id: `eq.${id}` }).then(r => r.length),
+    sb('/client_conversations', { select: '*', client_id: `eq.${id}`, order: 'sent_at.desc', limit: '15' }),
+  ]);
+
+  // sections
+  let html = '';
+
+  // ─── CHURN + ENGAGEMENT ───
+  html += `<div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">`;
+  if (churn) {
+    html += `<div class="bg-white rounded-xl p-5 shadow-sm">
+      <div class="text-xs uppercase text-slate-500 mb-2 tracking-wide">Churn Risk</div>
+      <div class="flex items-baseline gap-3">
+        <span class="text-4xl font-bold">${churn.risk_score}</span>
+        <span class="px-2 py-1 text-xs font-semibold rounded-full risk-${churn.risk_tier} uppercase">${churn.risk_tier}</span>
+      </div>
+      <div class="text-xs text-slate-400 mt-1">Trend: ${churn.trend}</div>
+      <div class="mt-3 space-y-1 text-sm">${(churn.primary_reasons||[]).map(r => `<div>· ${esc(r)}</div>`).join('')}</div>
+      <div class="mt-3 text-xs text-slate-600 italic">${esc(churn.recommended_action||'')}</div>
+    </div>`;
+  } else {
+    html += `<div class="bg-white rounded-xl p-5 shadow-sm"><div class="text-xs uppercase text-slate-500">Churn Risk</div><div class="text-slate-400 mt-2">Not yet scored</div></div>`;
+  }
+
+  // Engagement card
+  if (snap) {
+    html += `<div class="bg-white rounded-xl p-5 shadow-sm">
+      <div class="text-xs uppercase text-slate-500 mb-2 tracking-wide">Engagement</div>
+      <div class="flex items-center gap-3">
+        ${snap.flag_color ? `<span class="px-2 py-1 text-xs font-semibold rounded-full flag-${snap.flag_color} uppercase">${snap.flag_color}</span>` : ''}
+      </div>
+      <div class="text-sm mt-3 space-y-1">
+        <div>Workouts: <b>${(snap.workout_completion_pct??0).toFixed(0)}%</b> (${snap.workouts_completed_this_week||0}/${snap.workouts_scheduled_this_week||0})</div>
+        <div>Days logged: <b>${snap.days_logged_last_7||0}/7</b></div>
+        <div>Protein streak: <b>${snap.protein_target_streak_days||0}d</b></div>
+        <div>Workout streak: <b>${snap.workout_streak_days||0}d</b></div>
+      </div>
+    </div>`;
+  } else {
+    html += `<div></div>`;
+  }
+
+  // Billing card
+  if (billing) {
+    const failStyle = (billing.payment_failure_count||0) > 0 ? 'text-red-600 font-semibold' : '';
+    html += `<div class="bg-white rounded-xl p-5 shadow-sm">
+      <div class="text-xs uppercase text-slate-500 mb-2 tracking-wide">Billing (${billing.stripe_account||'—'})</div>
+      <div class="text-2xl font-bold">${money(billing.cash_collected)}</div>
+      <div class="text-xs text-slate-400 mt-1">Cash collected</div>
+      <div class="text-sm mt-3 space-y-1">
+        <div>Contract: ${fmtDate(billing.contract_start)} → ${fmtDate(billing.contract_end)}</div>
+        <div>Type: ${billing.contract_type||'—'}</div>
+        <div>Term: ${billing.contract_length_months ? billing.contract_length_months+' mo' : '—'}</div>
+        <div class="${failStyle}">Failed charges: ${billing.payment_failure_count||0}</div>
+      </div>
+      ${billing.billing_city ? `<div class="text-xs text-slate-400 mt-3">${esc(billing.billing_city)}, ${esc(billing.billing_state||'')} ${esc(billing.billing_postal_code||'')}</div>` : ''}
+      ${billing.pandadoc_contract_url ? `<a href="${esc(billing.pandadoc_contract_url)}" target="_blank" class="text-xs text-sky-700 hover:underline block mt-2">View contract →</a>` : ''}
+    </div>`;
+  } else {
+    html += `<div class="bg-white rounded-xl p-5 shadow-sm"><div class="text-xs uppercase text-slate-500">Billing</div><div class="text-slate-400 mt-2">No Stripe record</div></div>`;
+  }
+  html += `</div>`;
+
+  // ─── TAGS ───
+  if (tags.length) {
+    html += `<div class="mb-6 flex flex-wrap gap-2">
+      ${tags.map(t => `<span class="px-3 py-1 text-xs rounded-full bg-sky-100 text-sky-800 font-medium">#${esc(t.tag)}</span>`).join('')}
+    </div>`;
+  }
+
+  // ─── RULES (Injuries, meds, dietary, prefs) ───
+  if (rules.length) {
+    html += `<div class="bg-white rounded-xl p-5 shadow-sm mb-6">
+      <h2 class="text-lg font-semibold mb-3">📋 Rules & Knowledge</h2>
+      <div class="space-y-2">
+        ${rules.map(r => `<div class="flex items-start gap-3 border-b border-slate-100 pb-2 last:border-b-0">
+          <span class="px-2 py-1 text-xs rounded font-semibold sev-${r.severity||'normal'}">${esc(r.category)}</span>
+          <div class="flex-1 text-sm">${esc(r.rule_text)}</div>
+        </div>`).join('')}
+      </div>
+    </div>`;
+  }
+
+  // ─── GOALS ───
+  if (goals.length) {
+    html += `<div class="bg-white rounded-xl p-5 shadow-sm mb-6">
+      <h2 class="text-lg font-semibold mb-3">🎯 Active Goals</h2>
+      <div class="space-y-3">
+        ${goals.map(g => `<div>
+          <div class="text-sm font-medium">${esc(g.goal_text)}</div>
+          <div class="text-xs text-slate-500 mt-1">
+            ${esc(g.baseline_value||'?')} → <b>${esc(g.target_value||'?')}</b>
+            ${g.target_date ? ' by ' + fmtDate(g.target_date) : ''}
+          </div>
+        </div>`).join('')}
+      </div>
+    </div>`;
+  }
+
+  // ─── WINS ───
+  if (wins.length) {
+    html += `<div class="bg-white rounded-xl p-5 shadow-sm mb-6">
+      <h2 class="text-lg font-semibold mb-3">🏆 Wins (${wins.length})</h2>
+      <div class="space-y-2">
+        ${wins.slice(0,10).map(w => `<div class="p-3 rounded ${w.quotable?'win-quotable':'bg-slate-50'} text-sm">
+          <div class="text-xs text-slate-500">${fmtDate(w.win_date)} · ${esc(w.category||'')}</div>
+          <div>${esc(w.headline).slice(0,300)}${w.headline && w.headline.length > 300 ? '…' : ''}</div>
+        </div>`).join('')}
+      </div>
+    </div>`;
+  }
+
+  // ─── CALLS ───
+  if (calls.length) {
+    html += `<div class="bg-white rounded-xl p-5 shadow-sm mb-6">
+      <h2 class="text-lg font-semibold mb-3">📞 Recent Calls</h2>
+      <div class="space-y-2">
+        ${calls.map(c => `<div class="flex items-center justify-between p-3 border-b border-slate-100 last:border-b-0">
+          <div>
+            <div class="text-sm font-medium">${esc(c.call_type||'call')}</div>
+            <div class="text-xs text-slate-500">${fmtDate(c.call_date)}</div>
+          </div>
+          ${c.fathom_url ? `<a href="${esc(c.fathom_url)}" target="_blank" class="text-xs text-sky-700 hover:underline">Fathom →</a>` : ''}
+        </div>`).join('')}
+      </div>
+    </div>`;
+  }
+
+  // ─── CONVERSATIONS ───
+  html += `<div class="bg-white rounded-xl p-5 shadow-sm mb-6">
+    <h2 class="text-lg font-semibold mb-1">💬 Conversations <span class="text-slate-400 text-sm font-normal">(${convCounts} total)</span></h2>
+    <div class="text-xs text-slate-500 mb-3">Last 15 shown</div>
+    <div class="space-y-2 max-h-[600px] overflow-y-auto">
+      ${recentConv.map(m => `<div class="p-3 rounded ${m.direction==='inbound'?'conv-inbound':'conv-outbound'}">
+        <div class="text-xs text-slate-500 mb-1">${m.direction==='inbound'?'← from client':'→ from you'} · ${fmtDateTime(m.sent_at)}</div>
+        <div class="text-sm">${esc((m.body||'').slice(0,400))}${m.body && m.body.length > 400 ? '…' : ''}</div>
+      </div>`).join('')}
+    </div>
+  </div>`;
+
+  // ─── LATEST CHECK-IN ───
+  if (checkin) {
+    html += `<div class="bg-white rounded-xl p-5 shadow-sm mb-6">
+      <h2 class="text-lg font-semibold mb-3">📝 Last Check-in (${fmtDate(checkin.checkin_date)})</h2>
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+        <div><div class="text-slate-400 text-xs">Weight</div><div>${checkin.weight_lbs||'—'} lbs</div></div>
+        <div><div class="text-slate-400 text-xs">Sleep</div><div>${checkin.sleep_hours_avg||'—'}h</div></div>
+        <div><div class="text-slate-400 text-xs">Stress</div><div>${checkin.stress_1to10||'—'}/10</div></div>
+        <div><div class="text-slate-400 text-xs">Energy</div><div>${checkin.energy_1to10||'—'}/10</div></div>
+      </div>
+      ${checkin.wins ? `<div class="mt-3 text-sm"><span class="text-slate-400 text-xs">Wins:</span> ${esc(checkin.wins).slice(0,300)}</div>` : ''}
+      ${checkin.struggles ? `<div class="mt-2 text-sm"><span class="text-slate-400 text-xs">Struggles:</span> ${esc(checkin.struggles).slice(0,300)}</div>` : ''}
+    </div>`;
+  }
+
+  document.getElementById('content').innerHTML = html;
+}
+
+render().catch(e => {
+  document.getElementById('content').innerHTML = `<div class="text-red-600">Error: ${esc(e.message)}</div>`;
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,1226 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Client Detail · Faerber Client OS</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script type="module">
+    // Tailwind CDN config
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'system-ui', '-apple-system', 'Segoe UI', 'sans-serif'],
+          },
+          colors: {
+            flag: {
+              green: '#10b981',
+              yellow: '#f59e0b',
+              red:    '#ef4444',
+            },
+            ink: {
+              900: '#0f172a',
+              700: '#334155',
+              500: '#64748b',
+              400: '#94a3b8',
+              200: '#e2e8f0',
+              100: '#f1f5f9',
+              50:  '#f8fafc',
+            },
+          },
+        },
+      },
+    };
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    body { font-family: 'Inter', system-ui, sans-serif; }
+    .pulse-dot::before {
+      content: ''; display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+      background: currentColor; margin-right: 6px; vertical-align: middle;
+      box-shadow: 0 0 0 0 currentColor; animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0%   { box-shadow: 0 0 0 0 rgba(255,255,255,.7); }
+      70%  { box-shadow: 0 0 0 8px rgba(255,255,255,0); }
+      100% { box-shadow: 0 0 0 0 rgba(255,255,255,0); }
+    }
+    .flag-band-green       { background: linear-gradient(135deg, #10b981 0%, #059669 100%); }
+    .flag-band-yellow      { background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); }
+    .flag-band-red         { background: linear-gradient(135deg, #ef4444 0%, #b91c1c 100%); }
+    .flag-band-onboarding  { background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%); }
+    .flag-band-ghosting    { background: linear-gradient(135deg, #64748b 0%, #334155 100%); }
+    .flag-band-no_data     { background: linear-gradient(135deg, #64748b 0%, #334155 100%); }
+    .stat-tile {
+      background: white; border: 1px solid #e2e8f0; border-radius: 12px;
+      padding: 18px 20px; transition: all 150ms ease;
+    }
+    .stat-tile:hover { border-color: #cbd5e1; transform: translateY(-1px); }
+
+    /* ── Hero strip (top of client detail) ────────────────── */
+    .hero-strip {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .hero-cell {
+      background: #fbfaf8;
+      border: 1px solid #efe7df;
+      border-radius: 12px;
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      min-width: 0;
+    }
+    .hero-cell .label {
+      font-size: 10px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: #94a3b8;
+      font-weight: 700;
+    }
+    .hero-cell .value {
+      margin-top: 4px;
+      font-size: 22px;
+      font-weight: 800;
+      color: #c18b9d;
+      letter-spacing: -0.01em;
+      line-height: 1.1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .hero-cell .value .unit {
+      font-size: 12px;
+      font-weight: 600;
+      color: #94a3b8;
+      margin-left: 2px;
+    }
+    .hero-cell.delta-good .value { color: #047857; }
+    .hero-cell.delta-bad  .value { color: #b91c1c; }
+    .hero-cell.rag-red    .value { color: #ef4444; }
+    .hero-cell.rag-yellow .value { color: #d97706; }
+    .hero-cell.rag-green  .value { color: #059669; }
+    .hero-cell.rag-onboarding .value { color: #3b82f6; }
+    .hero-cell.rag-ghosting   .value { color: #64748b; }
+    .hero-cell.rag-past       .value { color: #94a3b8; }
+    @media (max-width: 900px) {
+      .hero-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    }
+    @media (max-width: 540px) {
+      .hero-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+  </style>
+</head>
+<body class="bg-ink-50 text-ink-900 antialiased">
+
+  <!-- HEADER -->
+  <header class="bg-white border-b border-ink-200 sticky top-0 z-10">
+    <div class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+      <a href="index.html" class="flex items-center gap-2 text-ink-500 hover:text-ink-900 text-sm">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+        All clients
+      </a>
+      <div class="text-xs text-ink-400 font-medium tracking-wider">FAERBER CLIENT OS</div>
+    </div>
+  </header>
+
+  <main class="max-w-7xl mx-auto px-6 py-8">
+
+    <!-- LOADING -->
+    <div id="loading" class="text-center py-20 text-ink-400">
+      <div class="inline-block w-8 h-8 border-2 border-ink-200 border-t-ink-700 rounded-full animate-spin"></div>
+      <div class="mt-4">Loading client...</div>
+    </div>
+
+    <!-- CONTENT -->
+    <div id="content" class="hidden space-y-6">
+
+      <!-- HERO STRIP (at-a-glance stats) -->
+      <section id="heroStrip" class="hero-strip">
+        <div class="hero-cell" id="heroStart">
+          <div class="label">Started</div>
+          <div class="value">—</div>
+        </div>
+        <div class="hero-cell" id="heroCurrent">
+          <div class="label">Now</div>
+          <div class="value">—</div>
+        </div>
+        <div class="hero-cell" id="heroGoal">
+          <div class="label">Goal</div>
+          <div class="value">—</div>
+        </div>
+        <div class="hero-cell" id="heroDelta">
+          <div class="label">Δ</div>
+          <div class="value">—</div>
+        </div>
+        <div class="hero-cell" id="heroWeek">
+          <div class="label">Week</div>
+          <div class="value">—</div>
+        </div>
+        <div class="hero-cell" id="heroRag">
+          <div class="label">RAG</div>
+          <div class="value">—</div>
+        </div>
+      </section>
+
+      <!-- FLAG BANNER -->
+      <section id="flagBanner" class="rounded-2xl p-8 text-white shadow-lg">
+        <div class="flex items-start justify-between flex-wrap gap-4">
+          <div>
+            <div id="flagPulse" class="text-xs uppercase tracking-widest opacity-90 mb-2 pulse-dot"></div>
+            <h1 id="clientName" class="text-4xl font-extrabold tracking-tight"></h1>
+            <div class="mt-2 text-white/85 text-sm" id="clientMeta"></div>
+          </div>
+          <div class="text-right">
+            <div id="flagLabel" class="text-5xl font-black"></div>
+            <div id="flagDate" class="text-xs opacity-80 mt-1"></div>
+          </div>
+        </div>
+        <div id="flagReasons" class="mt-5 pt-5 border-t border-white/20 text-sm leading-relaxed"></div>
+        <div id="clientGoal" class="mt-3 text-sm text-white/90 italic"></div>
+      </section>
+
+      <!-- CONTEXT (from Monday Notes Doc) -->
+      <section id="contextSection" class="hidden">
+        <h2 class="text-xs uppercase tracking-widest text-ink-500 font-semibold mb-3">Background Context</h2>
+        <div class="bg-white border border-ink-200 rounded-2xl p-5">
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4 text-sm">
+            <div><div class="text-ink-400 text-xs">Age</div><div id="ctxAge" class="font-semibold"></div></div>
+            <div><div class="text-ink-400 text-xs">Location</div><div id="ctxLocation" class="font-semibold"></div></div>
+            <div><div class="text-ink-400 text-xs">Coach</div><div id="ctxCoach" class="font-semibold"></div></div>
+            <div><div class="text-ink-400 text-xs">Program</div><div id="ctxProgram" class="font-semibold"></div></div>
+            <div><div class="text-ink-400 text-xs">Starting Weight</div><div id="ctxStart" class="font-semibold"></div></div>
+            <div><div class="text-ink-400 text-xs">Goal Weight</div><div id="ctxGoal" class="font-semibold"></div></div>
+            <div><div class="text-ink-400 text-xs">Lbs to Lose</div><div id="ctxDelta" class="font-semibold"></div></div>
+            <div><div class="text-ink-400 text-xs">Started</div><div id="ctxStartDate" class="font-semibold"></div></div>
+          </div>
+          <div id="ctxSummary" class="text-sm text-ink-700 leading-relaxed border-t border-ink-100 pt-4"></div>
+        </div>
+      </section>
+
+      <!-- COACH RECOMMENDATIONS -->
+      <section id="recsSection" class="hidden">
+        <div class="flex items-baseline justify-between mb-3">
+          <h2 class="text-xs uppercase tracking-widest text-ink-500 font-semibold">Coach Recommendations</h2>
+          <span id="recsGenerated" class="text-xs text-ink-400"></span>
+        </div>
+        <div id="recsList" class="space-y-3"></div>
+      </section>
+
+      <!-- ONBOARD BUTTON (shown if not yet onboarded — first 7 days OR no Trainerize program yet) -->
+      <section id="onboardingBanner" class="hidden">
+        <button id="onboardClientBtn" class="w-full rounded-2xl p-5 bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-lg hover:from-violet-700 hover:to-indigo-700 transition text-left flex items-center justify-between gap-4">
+          <div>
+            <div class="text-xs uppercase tracking-widest font-bold opacity-80">🆕 NEEDS ONBOARDING</div>
+            <div class="text-lg font-bold mt-1">Onboard <span id="onboardClientFirstName">this client</span> — full setup in one click</div>
+            <div class="text-sm opacity-90 mt-1">Builds Phase 1 workouts + locks macros + meal plan to-do + welcome message</div>
+          </div>
+          <div class="text-3xl">▸</div>
+        </button>
+      </section>
+
+      <!-- DEACTIVATE / REACTIVATE -->
+      <section>
+        <div class="flex items-center justify-end gap-2">
+          <button id="reactivateBtn" class="hidden text-xs font-semibold bg-emerald-600 text-white px-3 py-2 rounded-lg hover:bg-emerald-700">♻️ Reactivate client</button>
+          <button id="deactivateBtn" class="text-xs font-semibold bg-white border border-red-300 text-red-700 px-3 py-2 rounded-lg hover:bg-red-50">🚫 Deactivate (move to Past Clients)</button>
+        </div>
+      </section>
+
+      <!-- QUICK ACTIONS -->
+      <section>
+        <h2 class="text-xs uppercase tracking-widest text-ink-500 font-semibold mb-3">Quick Actions</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <button data-quick-action="mealplan" class="quick-action bg-white border border-ink-200 hover:border-emerald-500 hover:bg-emerald-50 rounded-xl p-4 text-left transition">
+            <div class="text-2xl mb-1">🍽️</div>
+            <div class="font-bold text-sm text-ink-900">Create new meal plan</div>
+            <div class="text-xs text-ink-500 mt-0.5">Sonnet picks meals + builds Bella PDF → ~/Downloads</div>
+          </button>
+          <button data-quick-action="midweek" class="quick-action bg-white border border-ink-200 hover:border-cyan-500 hover:bg-cyan-50 rounded-xl p-4 text-left transition">
+            <div class="text-2xl mb-1">💬</div>
+            <div class="font-bold text-sm text-ink-900">Send mid-week update</div>
+            <div class="text-xs text-ink-500 mt-0.5">"Hey [name], great work — improvements: A, B, C." Drafted + sent via Trainerize.</div>
+          </button>
+          <button data-quick-action="recalc-macros" class="quick-action bg-white border border-ink-200 hover:border-amber-500 hover:bg-amber-50 rounded-xl p-4 text-left transition">
+            <div class="text-2xl mb-1">🔥</div>
+            <div class="font-bold text-sm text-ink-900">Update nutrition goals</div>
+            <div class="text-xs text-ink-500 mt-0.5">Pull recent progress → recalc macros → push to Trainerize</div>
+          </button>
+          <button data-quick-action="rebuild-workouts" class="quick-action bg-white border border-ink-200 hover:border-indigo-500 hover:bg-indigo-50 rounded-xl p-4 text-left transition">
+            <div class="text-2xl mb-1">💪</div>
+            <div class="font-bold text-sm text-ink-900">New workout program from messages</div>
+            <div class="text-xs text-ink-500 mt-0.5">Pulls last 30d Trainerize messages → drafts new program starting next Monday</div>
+          </button>
+        </div>
+        <div id="quickActionStatus" class="text-xs text-ink-500 mt-3 hidden"></div>
+      </section>
+
+      <!-- THIS WEEK STATS -->
+      <section>
+        <h2 class="text-xs uppercase tracking-widest text-ink-500 font-semibold mb-3">This Week</h2>
+        <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+          <div class="stat-tile">
+            <div class="text-xs text-ink-500 font-medium">Workouts</div>
+            <div class="mt-1 text-3xl font-extrabold tracking-tight" id="statWorkouts"></div>
+            <div class="text-xs text-ink-400 mt-1" id="statWorkoutsPct"></div>
+          </div>
+          <div class="stat-tile">
+            <div class="text-xs text-ink-500 font-medium">Food Logged</div>
+            <div class="mt-1 text-3xl font-extrabold tracking-tight" id="statLogged"></div>
+            <div class="text-xs text-ink-400 mt-1">days this week</div>
+          </div>
+          <div class="stat-tile">
+            <div class="text-xs text-ink-500 font-medium">Avg Calories</div>
+            <div class="mt-1 text-3xl font-extrabold tracking-tight" id="statCalories"></div>
+            <div class="text-xs text-ink-400 mt-1" id="statCaloriesTarget"></div>
+          </div>
+          <div class="stat-tile">
+            <div class="text-xs text-ink-500 font-medium">Avg Protein</div>
+            <div class="mt-1 text-3xl font-extrabold tracking-tight" id="statProtein"></div>
+            <div class="text-xs text-ink-400 mt-1" id="statProteinTarget"></div>
+          </div>
+          <div class="stat-tile">
+            <div class="text-xs text-ink-500 font-medium">Avg Carbs</div>
+            <div class="mt-1 text-3xl font-extrabold tracking-tight" id="statCarbs"></div>
+            <div class="text-xs text-ink-400 mt-1" id="statCarbsTarget"></div>
+          </div>
+          <div class="stat-tile">
+            <div class="text-xs text-ink-500 font-medium">Avg Fat</div>
+            <div class="mt-1 text-3xl font-extrabold tracking-tight" id="statFat"></div>
+            <div class="text-xs text-ink-400 mt-1" id="statFatTarget"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- STREAKS -->
+      <section>
+        <h2 class="text-xs uppercase tracking-widest text-ink-500 font-semibold mb-3">Streaks</h2>
+        <div class="grid grid-cols-3 gap-3">
+          <div class="stat-tile">
+            <div class="flex items-center gap-2">
+              <span class="text-2xl">🔥</span>
+              <div class="text-xs text-ink-500 font-medium">Workout</div>
+            </div>
+            <div class="mt-1 text-3xl font-extrabold" id="streakWorkout"></div>
+            <div class="text-xs text-ink-400">consecutive days</div>
+          </div>
+          <div class="stat-tile">
+            <div class="flex items-center gap-2">
+              <span class="text-2xl">📝</span>
+              <div class="text-xs text-ink-500 font-medium">Food Logging</div>
+            </div>
+            <div class="mt-1 text-3xl font-extrabold" id="streakLog"></div>
+            <div class="text-xs text-ink-400">consecutive days</div>
+          </div>
+          <div class="stat-tile">
+            <div class="flex items-center gap-2">
+              <span class="text-2xl">🥩</span>
+              <div class="text-xs text-ink-500 font-medium">Protein Target</div>
+            </div>
+            <div class="mt-1 text-3xl font-extrabold" id="streakProtein"></div>
+            <div class="text-xs text-ink-400">consecutive days</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TREND CHARTS -->
+      <section>
+        <h2 class="text-xs uppercase tracking-widest text-ink-500 font-semibold mb-3">30-Day Trends</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div class="bg-white border border-ink-200 rounded-2xl p-5">
+            <div class="flex items-center justify-between mb-3">
+              <div class="text-sm font-semibold">Protein per Day</div>
+              <div class="text-xs text-ink-400" id="proteinChartSub"></div>
+            </div>
+            <div class="h-48"><canvas id="proteinChart"></canvas></div>
+          </div>
+          <div class="bg-white border border-ink-200 rounded-2xl p-5">
+            <div class="flex items-center justify-between mb-3">
+              <div class="text-sm font-semibold">Calories per Day</div>
+              <div class="text-xs text-ink-400" id="caloriesChartSub"></div>
+            </div>
+            <div class="h-48"><canvas id="caloriesChart"></canvas></div>
+          </div>
+          <div class="bg-white border border-ink-200 rounded-2xl p-5">
+            <div class="flex items-center justify-between mb-3">
+              <div class="text-sm font-semibold">Workouts Completed</div>
+              <div class="text-xs text-ink-400">last 7-day rolling</div>
+            </div>
+            <div class="h-48"><canvas id="workoutsChart"></canvas></div>
+          </div>
+          <div class="bg-white border border-ink-200 rounded-2xl p-5">
+            <div class="flex items-center justify-between mb-3">
+              <div class="text-sm font-semibold">Carbs per Day</div>
+              <div class="text-xs text-ink-400" id="carbsChartSub"></div>
+            </div>
+            <div class="h-48"><canvas id="carbsChart"></canvas></div>
+          </div>
+          <div class="bg-white border border-ink-200 rounded-2xl p-5">
+            <div class="flex items-center justify-between mb-3">
+              <div class="text-sm font-semibold">Fat per Day</div>
+              <div class="text-xs text-ink-400" id="fatChartSub"></div>
+            </div>
+            <div class="h-48"><canvas id="fatChart"></canvas></div>
+          </div>
+          <div class="bg-white border border-ink-200 rounded-2xl p-5">
+            <div class="flex items-center justify-between mb-3">
+              <div class="text-sm font-semibold">Days Logged per Week</div>
+              <div class="text-xs text-ink-400">rolling 7-day</div>
+            </div>
+            <div class="h-48"><canvas id="loggedChart"></canvas></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- FLAG HISTORY -->
+      <section>
+        <h2 class="text-xs uppercase tracking-widest text-ink-500 font-semibold mb-3">Flag History (30 days)</h2>
+        <div class="bg-white border border-ink-200 rounded-2xl p-5">
+          <div id="flagHistory" class="flex gap-1 flex-wrap"></div>
+          <div class="flex gap-4 mt-4 text-xs text-ink-500">
+            <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-sm bg-flag-green inline-block"></span>Green</span>
+            <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-sm bg-flag-yellow inline-block"></span>Yellow</span>
+            <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-sm bg-flag-red inline-block"></span>Red</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- STREAK MILESTONES -->
+      <section id="milestonesSection" class="hidden">
+        <h2 class="text-xs uppercase tracking-widest text-ink-500 font-semibold mb-3">Streak Milestones</h2>
+        <div class="bg-white border border-ink-200 rounded-2xl p-5">
+          <ul id="milestonesList" class="space-y-2 text-sm"></ul>
+        </div>
+      </section>
+
+      <!-- CHECK-IN HISTORY -->
+      <section id="checkinsSection">
+        <h2 class="text-xs uppercase tracking-widest text-ink-500 font-semibold mb-3">Weekly Check-Ins (last 2 months)</h2>
+        <div id="checkinsList" class="space-y-3"></div>
+      </section>
+
+    </div>
+  </main>
+
+  <script type="module">
+    import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+    const SUPABASE_URL = 'https://sfuvqaoeuajsrvldoiek.supabase.co';
+    const SUPABASE_KEY = 'sb_publishable_fRb1TIgDRxvkXFskGIMsnA_QikUcw9U';
+    const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+    // Read ?id= or default to Adora
+    const urlParams = new URLSearchParams(window.location.search);
+    const clientId = urlParams.get('id');
+
+    // Stage override cache — fetched once at load.
+    let stageOverridesCache = {};
+    async function fetchStageOverrides() {
+      try {
+        const res = await fetch('/api/stage-overrides');
+        if (!res.ok) return {};
+        const data = await res.json();
+        return data.overrides || {};
+      } catch {
+        return {};
+      }
+    }
+
+    // Apply override on top of the auto stage. Mirrors index.html logic.
+    function applyOverride(client, autoStage) {
+      const k1 = String(client.trainerize_user_id || client.id);
+      const k2 = String(client.id);
+      const override = stageOverridesCache[k1] ?? stageOverridesCache[k2] ?? null;
+      return { stage: override || autoStage, hasOverride: override !== null };
+    }
+
+    // Program length (default 24 weeks)
+    const PROGRAM_LENGTH_WEEKS = 24;
+
+    function weeksSince(startDate) {
+      if (!startDate) return null;
+      const start = new Date(startDate).getTime();
+      if (isNaN(start)) return null;
+      const days = Math.floor((Date.now() - start) / 86400000);
+      return Math.max(0, Math.floor(days / 7)) + 1;
+    }
+
+    // current weight: prefer the Monday-parsed value, fall back to snapshot-derived.
+    function currentWeightLb(client, latestSnap) {
+      if (client.current_weight_lbs != null) return client.current_weight_lbs;
+      const start = client.starting_weight_lbs;
+      const change = latestSnap?.weight_change_last_4wk;
+      if (start == null || change == null) return null;
+      return Math.round((start + change) * 10) / 10;
+    }
+
+    function renderHeroStrip(client, latestSnap, autoStage) {
+      const { stage, hasOverride } = applyOverride(client, autoStage);
+
+      const start = client.starting_weight_lbs;
+      const goal = client.goal_weight_lbs;
+      const cur = currentWeightLb(client, latestSnap);
+      // Prefer Monday weight_change_lbs (current - starting); fall back to snapshot 4wk change.
+      const change = client.weight_change_lbs != null
+        ? client.weight_change_lbs
+        : latestSnap?.weight_change_last_4wk;
+      const wk = weeksSince(client.start_date);
+
+      const setCell = (id, value, unit = '', extraClass = '') => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.className = `hero-cell${extraClass ? ' ' + extraClass : ''}`;
+        const valEl = el.querySelector('.value');
+        valEl.innerHTML = value == null || value === ''
+          ? '—'
+          : `${value}${unit ? `<span class="unit">${unit}</span>` : ''}`;
+      };
+
+      setCell('heroStart',   start ?? null, ' lb');
+      setCell('heroCurrent', cur   ?? null, ' lb');
+      setCell('heroGoal',    goal  ?? null, ' lb');
+
+      // Δ — arrow, color, direction logic
+      if (change == null || start == null) {
+        setCell('heroDelta', null);
+      } else {
+        const rounded = Math.round(change * 10) / 10;
+        const arrow = rounded < 0 ? '↓' : rounded > 0 ? '↑' : '·';
+        let cls = '';
+        if (goal != null && rounded !== 0) {
+          const wantsLoss = goal < start;
+          const goodDirection = wantsLoss ? rounded < 0 : rounded > 0;
+          cls = goodDirection ? 'delta-good' : 'delta-bad';
+        }
+        setCell('heroDelta', `${arrow} ${Math.abs(rounded).toFixed(1)}`, ' lb', cls);
+      }
+
+      // Week X/Y
+      setCell('heroWeek', wk == null ? null : `${wk}/${PROGRAM_LENGTH_WEEKS}`);
+
+      // RAG — label + color
+      const stageLabel = stage
+        ? stage.charAt(0).toUpperCase() + stage.slice(1)
+        : '—';
+      setCell('heroRag', stage ? stageLabel + (hasOverride ? ' ¹' : '') : null, '', stage ? `rag-${stage}` : '');
+      if (hasOverride) {
+        const el = document.getElementById('heroRag');
+        if (el) el.title = 'Stage manually overridden';
+      }
+    }
+
+    async function load() {
+      // 0. Fetch stage overrides (used by hero strip RAG cell)
+      stageOverridesCache = await fetchStageOverrides();
+
+      // 0b. Pull Monday client list so the URL ?id= can be a monday_item_id.
+      // We use it to (a) resolve the client by Monday item id or trainerize id
+      // and (b) overlay parsed weight fields on top of Supabase data later.
+      let mondayMatch = null;
+      try {
+        const res = await fetch('/api/monday-clients');
+        if (res.ok) {
+          const payload = await res.json();
+          const list = payload.clients || [];
+          if (clientId) {
+            mondayMatch = list.find(c =>
+              String(c.monday_item_id) === String(clientId)
+              || (c.trainerize_user_id && String(c.trainerize_user_id) === String(clientId))
+            ) || null;
+          }
+        }
+      } catch (e) {
+        console.warn('[monday-clients] fetch failed (non-fatal):', e.message);
+      }
+
+      // 1. Get Supabase client — try by id, then by trainerize_user_id (from Monday match).
+      let client = null;
+      const tryClientLookup = async () => {
+        // a) direct UUID match (legacy URLs)
+        if (clientId) {
+          const { data: r1 } = await supabase.from('clients').select('*').eq('id', clientId).limit(1);
+          if (r1?.length) return r1[0];
+          // b) trainerize_user_id from URL
+          const { data: r2 } = await supabase.from('clients').select('*').eq('trainerize_user_id', String(clientId)).limit(1);
+          if (r2?.length) return r2[0];
+        }
+        // c) trainerize_user_id from the Monday match
+        if (mondayMatch?.trainerize_user_id) {
+          const { data: r3 } = await supabase.from('clients').select('*').eq('trainerize_user_id', String(mondayMatch.trainerize_user_id)).limit(1);
+          if (r3?.length) return r3[0];
+        }
+        return null;
+      };
+      client = await tryClientLookup();
+
+      // If no Supabase row but we have a Monday match, synthesize a minimal client
+      // so the hero strip + context section still render. Snapshot-dependent
+      // sections will gracefully fall through.
+      if (!client && mondayMatch) {
+        client = {
+          id: mondayMatch.monday_item_id,
+          full_name: mondayMatch.name,
+          start_date: mondayMatch.started_at,
+          trainerize_user_id: mondayMatch.trainerize_user_id,
+        };
+      }
+      if (!client) {
+        // Fall back to default Adora only when no clientId was passed at all
+        if (!clientId) {
+          const { data: r } = await supabase.from('clients').select('*').eq('trainerize_user_id', '25086658').limit(1);
+          if (r?.length) client = r[0];
+        }
+      }
+      if (!client) {
+        document.getElementById('loading').innerHTML = '❌ Client not found.';
+        return;
+      }
+
+      // Overlay Monday-parsed weight fields on top of Supabase data — preferred.
+      if (mondayMatch) {
+        if (mondayMatch.starting_weight_lbs != null) client.starting_weight_lbs = mondayMatch.starting_weight_lbs;
+        if (mondayMatch.goal_weight_lbs != null) client.goal_weight_lbs = mondayMatch.goal_weight_lbs;
+        client.current_weight_lbs = mondayMatch.current_weight_lbs;
+        client.weight_change_lbs = mondayMatch.weight_change_lbs;
+        if (mondayMatch.started_at && !client.start_date) client.start_date = mondayMatch.started_at;
+        client.monday_item_id = mondayMatch.monday_item_id;
+        client.programmed_to = mondayMatch.programmed_to;
+      }
+
+      // 2. Get snapshots (last 30 days) — only if we have a Supabase UUID
+      const isSupabaseUuid = typeof client.id === 'string' && /^[0-9a-f-]{36}$/i.test(client.id);
+      let snapshots = [];
+      if (isSupabaseUuid) {
+        const { data } = await supabase
+          .from('daily_snapshots')
+          .select('*')
+          .eq('client_id', client.id)
+          .order('snapshot_date', { ascending: true });
+        snapshots = data || [];
+      }
+
+      if (!snapshots.length) {
+        // No snapshot data yet — still render the page with Monday-only data.
+        // Use a synthetic "no_data" snapshot so the existing render path works.
+        snapshots = [{
+          snapshot_date: new Date().toISOString().slice(0, 10),
+          flag_color: 'no_data',
+          flag_reasons: [],
+          workouts_completed_this_week: 0,
+          workouts_scheduled_this_week: 0,
+          days_logged_last_7: 0,
+          avg_protein_g_7d: null,
+          avg_calories_7d: null,
+          log_streak_days: 0,
+          workout_streak_days: 0,
+          weight_change_last_4wk: null,
+        }];
+      }
+
+      // 3-5. Supabase-backed sections — only fetch when we have a real client UUID.
+      let milestones = [];
+      let checkins = [];
+      let recs = [];
+      if (isSupabaseUuid) {
+        const [mRes, cRes, rRes] = await Promise.all([
+          supabase.from('streak_milestones').select('*').eq('client_id', client.id).order('hit_at', { ascending: false }),
+          supabase.from('weekly_checkins').select('*').eq('client_id', client.id).order('checkin_date', { ascending: false }),
+          supabase.from('recommendations').select('*').eq('client_id', client.id).eq('is_current', true).order('priority', { ascending: true }),
+        ]);
+        milestones = mRes.data || [];
+        checkins = cRes.data || [];
+        recs = rRes.data || [];
+      }
+
+      render(client, snapshots, milestones, checkins, recs);
+    }
+
+    function render(client, snapshots, milestones, checkins, recs) {
+      const latest = snapshots[snapshots.length - 1];
+
+      // --- Banner ---
+      const bannerEl = document.getElementById('flagBanner');
+      // Effective flag: client_status='ghosting' overrides, no_data maps to ghosting
+      let effectiveFlag = latest.flag_color;
+      if (client.client_status === 'ghosting' || effectiveFlag === 'no_data') {
+        effectiveFlag = 'ghosting';
+      }
+      if (client.is_active === false) effectiveFlag = 'past';
+
+      // --- Hero strip (at-a-glance) ---
+      renderHeroStrip(client, latest, effectiveFlag);
+
+      bannerEl.classList.add(`flag-band-${effectiveFlag}`);
+      document.getElementById('flagPulse').textContent = 'Current status';
+      document.getElementById('clientName').textContent = client.full_name;
+      document.getElementById('clientMeta').innerHTML =
+        `Started ${formatDate(client.start_date)} · Targets: ${client.daily_calorie_target} cal / ${client.daily_protein_target_g}g protein / ${client.weekly_target_workouts} workouts per week`;
+      document.getElementById('flagLabel').textContent = effectiveFlag.toUpperCase();
+      document.getElementById('flagDate').textContent = `as of ${latest.snapshot_date}`;
+
+      const reasons = latest.flag_reasons || [];
+      document.getElementById('flagReasons').innerHTML = reasons.length
+        ? `<strong class="opacity-95">What's pulling them off:</strong> ${reasons.join(' · ')}`
+        : `<span class="opacity-90">All compliance metrics holding steady. Maintain.</span>`;
+
+      if (client.goal) {
+        document.getElementById('clientGoal').textContent = `🎯 ${client.goal}`;
+      }
+
+      // --- Onboard button (show if start_date within last 7 days OR no daily_calorie_target set) ---
+      const startMs = client.start_date ? new Date(client.start_date).getTime() : null;
+      const daysIn = startMs ? Math.floor((Date.now() - startMs) / 86400000) : null;
+      const needsOnboarding = (daysIn != null && daysIn >= 0 && daysIn <= 7) || !client.daily_calorie_target;
+      if (needsOnboarding) {
+        document.getElementById('onboardingBanner').classList.remove('hidden');
+        document.getElementById('onboardClientFirstName').textContent = (client.full_name || '').split(' ')[0];
+      }
+
+      // --- Quick action wiring ---
+      wireQuickActions(client);
+
+      // --- Background context ---
+      if (client.age || client.location || client.context_summary || client.starting_weight_lbs) {
+        document.getElementById('contextSection').classList.remove('hidden');
+        document.getElementById('ctxAge').textContent = client.age || '—';
+        document.getElementById('ctxLocation').textContent = client.location || '—';
+        document.getElementById('ctxCoach').textContent = client.assigned_coach || '—';
+        document.getElementById('ctxProgram').textContent = client.program_term || '—';
+        document.getElementById('ctxStart').textContent = client.starting_weight_lbs ? `${client.starting_weight_lbs} lbs` : '—';
+        document.getElementById('ctxGoal').textContent = client.goal_weight_lbs ? `${client.goal_weight_lbs} lbs` : '—';
+        const delta = (client.starting_weight_lbs && client.goal_weight_lbs)
+          ? `${client.starting_weight_lbs - client.goal_weight_lbs} lbs`
+          : '—';
+        document.getElementById('ctxDelta').textContent = delta;
+        document.getElementById('ctxStartDate').textContent = formatDate(client.start_date);
+        document.getElementById('ctxSummary').textContent = client.context_summary || '';
+      }
+
+      // --- Recommendations ---
+      if (recs && recs.length) {
+        document.getElementById('recsSection').classList.remove('hidden');
+        document.getElementById('recsGenerated').textContent =
+          recs[0]?.generated_at ? `Generated ${formatDate(recs[0].generated_at)}` : '';
+        const list = document.getElementById('recsList');
+        const actionColors = {
+          send_message: 'bg-blue-50 text-blue-700 border-blue-200',
+          schedule_call: 'bg-purple-50 text-purple-700 border-purple-200',
+          adjust_program: 'bg-rose-50 text-rose-700 border-rose-200',
+          send_resource: 'bg-teal-50 text-teal-700 border-teal-200',
+          celebrate: 'bg-amber-50 text-amber-700 border-amber-200',
+          monitor: 'bg-slate-50 text-slate-700 border-slate-200',
+        };
+        recs.forEach(r => {
+          const card = document.createElement('div');
+          card.className = 'bg-white border border-ink-200 rounded-xl p-4 hover:border-ink-400 transition';
+          const actionClass = actionColors[r.action_type] || 'bg-ink-100 text-ink-700 border-ink-200';
+          const bullets = (r.bullets && r.bullets.length)
+            ? r.bullets
+            : (r.body ? r.body.split(' · ') : []);
+          const bulletHTML = bullets.length
+            ? `<ul class="mt-1.5 space-y-1 text-[13px] text-ink-700 leading-snug">
+                 ${bullets.map(b => `<li class="flex gap-2"><span class="text-ink-400">•</span><span>${escapeHTML(b)}</span></li>`).join('')}
+               </ul>`
+            : '';
+          card.innerHTML = `
+            <div class="flex items-start gap-3">
+              <div class="flex-shrink-0 w-7 h-7 rounded-full bg-ink-900 text-white font-bold flex items-center justify-center text-xs">${r.priority}</div>
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center justify-between gap-2 flex-wrap">
+                  <h3 class="font-semibold text-sm text-ink-900">${escapeHTML(r.title)}</h3>
+                  ${r.action_type ? `<span class="text-[9px] uppercase tracking-wider font-semibold px-1.5 py-0.5 rounded border ${actionClass}">${r.action_type.replace(/_/g, ' ')}</span>` : ''}
+                </div>
+                ${bulletHTML}
+                ${r.rationale ? `<p class="text-[11px] text-ink-400 mt-2 italic">${escapeHTML(r.rationale)}</p>` : ''}
+              </div>
+            </div>
+          `;
+          list.appendChild(card);
+        });
+      }
+
+      // --- Stat tiles ---
+      document.getElementById('statWorkouts').textContent =
+        `${latest.workouts_completed_this_week}/${latest.workouts_scheduled_this_week}`;
+      document.getElementById('statWorkoutsPct').textContent =
+        latest.workout_completion_pct ? `${latest.workout_completion_pct}% completion` : '';
+
+      document.getElementById('statLogged').textContent = `${latest.days_logged_last_7}/7`;
+
+      document.getElementById('statProtein').textContent =
+        latest.avg_protein_g_7d ? `${Math.round(latest.avg_protein_g_7d)}g` : '—';
+      const proteinPct = latest.avg_protein_g_7d
+        ? Math.round((latest.avg_protein_g_7d / client.daily_protein_target_g) * 100)
+        : null;
+      document.getElementById('statProteinTarget').textContent =
+        `target ${client.daily_protein_target_g}g${proteinPct ? ` (${proteinPct}%)` : ''}`;
+
+      document.getElementById('statCalories').textContent =
+        latest.avg_calories_7d ? Math.round(latest.avg_calories_7d).toLocaleString() : '—';
+      document.getElementById('statCaloriesTarget').textContent =
+        `target ${client.daily_calorie_target ? client.daily_calorie_target.toLocaleString() : '—'}`;
+
+      document.getElementById('statCarbs').textContent =
+        latest.avg_carbs_g_7d ? `${Math.round(latest.avg_carbs_g_7d)}g` : '—';
+      const carbsPct = (latest.avg_carbs_g_7d && client.daily_carbs_target_g)
+        ? Math.round((latest.avg_carbs_g_7d / client.daily_carbs_target_g) * 100)
+        : null;
+      document.getElementById('statCarbsTarget').textContent =
+        `target ${client.daily_carbs_target_g || '—'}g${carbsPct ? ` (${carbsPct}%)` : ''}`;
+
+      document.getElementById('statFat').textContent =
+        latest.avg_fat_g_7d ? `${Math.round(latest.avg_fat_g_7d)}g` : '—';
+      const fatPct = (latest.avg_fat_g_7d && client.daily_fat_target_g)
+        ? Math.round((latest.avg_fat_g_7d / client.daily_fat_target_g) * 100)
+        : null;
+      document.getElementById('statFatTarget').textContent =
+        `target ${client.daily_fat_target_g || '—'}g${fatPct ? ` (${fatPct}%)` : ''}`;
+
+      // --- Streaks ---
+      document.getElementById('streakWorkout').textContent = latest.workout_streak_days || 0;
+      document.getElementById('streakLog').textContent = latest.log_streak_days || 0;
+      document.getElementById('streakProtein').textContent = latest.protein_target_streak_days || 0;
+
+      // --- Charts ---
+      const labels = snapshots.map(s => s.snapshot_date.slice(5)); // MM-DD
+      renderProteinChart(labels, snapshots, client);
+      renderCaloriesChart(labels, snapshots, client);
+      renderWorkoutsChart(labels, snapshots);
+      renderCarbsChart(labels, snapshots, client);
+      renderFatChart(labels, snapshots, client);
+      renderLoggedChart(labels, snapshots);
+
+      // Chart subtitles
+      document.getElementById('proteinChartSub').textContent = `target ${client.daily_protein_target_g || '—'}g`;
+      document.getElementById('caloriesChartSub').textContent = `target ${client.daily_calorie_target ? client.daily_calorie_target.toLocaleString() : '—'}`;
+      document.getElementById('carbsChartSub').textContent = `target ${client.daily_carbs_target_g || '—'}g`;
+      document.getElementById('fatChartSub').textContent = `target ${client.daily_fat_target_g || '—'}g`;
+
+      // --- Flag history strip ---
+      const stripEl = document.getElementById('flagHistory');
+      snapshots.forEach(s => {
+        const dot = document.createElement('div');
+        dot.className = `w-5 h-8 rounded-sm bg-flag-${s.flag_color} relative group cursor-help`;
+        dot.title = `${s.snapshot_date} — ${s.flag_color.toUpperCase()}${s.flag_reasons?.length ? ' — ' + s.flag_reasons.join('; ') : ''}`;
+        stripEl.appendChild(dot);
+      });
+
+      // --- Check-ins ---
+      const checkinsList = document.getElementById('checkinsList');
+      if (checkins && checkins.length) {
+        checkins.forEach(c => {
+          const raw = c.raw_form_data || {};
+          const card = document.createElement('div');
+          card.className = 'bg-white border border-ink-200 rounded-2xl p-5';
+          const stressColor = c.stress_1to10 == null ? '#94a3b8' : c.stress_1to10 >= 7 ? '#ef4444' : c.stress_1to10 >= 4 ? '#f59e0b' : '#10b981';
+          const energyColor = c.energy_1to10 == null ? '#94a3b8' : c.energy_1to10 >= 7 ? '#10b981' : c.energy_1to10 >= 4 ? '#f59e0b' : '#ef4444';
+          card.innerHTML = `
+            <div class="flex items-baseline justify-between flex-wrap gap-2 mb-3">
+              <div class="font-semibold">Check-in · ${formatDate(c.checkin_date)}</div>
+              <div class="flex gap-3 text-xs">
+                <span>Stress: <strong style="color:${stressColor}">${c.stress_1to10 ?? '—'}/10</strong></span>
+                <span>Energy: <strong style="color:${energyColor}">${c.energy_1to10 ?? '—'}/10</strong></span>
+                ${raw.weight_change ? `<span>Weight: <strong>${raw.weight_change}</strong></span>` : ''}
+                ${raw.rating ? `<span>Rating: <strong>${raw.rating}/10</strong></span>` : ''}
+              </div>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-3 text-sm">
+              ${c.wins ? `<div><div class="text-ink-400 text-xs mb-1">🏆 Biggest win</div><div>${escapeHTML(c.wins)}</div></div>` : ''}
+              ${c.struggles ? `<div><div class="text-ink-400 text-xs mb-1">⚠️ Struggles</div><div>${escapeHTML(c.struggles)}</div></div>` : ''}
+              ${raw.things_did_well ? `<div><div class="text-ink-400 text-xs mb-1">✅ Did well</div><div>${escapeHTML(raw.things_did_well)}</div></div>` : ''}
+              ${c.questions ? `<div><div class="text-ink-400 text-xs mb-1">🙋 Support requested</div><div>${escapeHTML(c.questions)}</div></div>` : ''}
+              ${raw.personal_goal ? `<div><div class="text-ink-400 text-xs mb-1">🎯 Personal goal</div><div>${escapeHTML(raw.personal_goal)}</div></div>` : ''}
+              ${raw.other_comments ? `<div><div class="text-ink-400 text-xs mb-1">💬 Other</div><div>${escapeHTML(raw.other_comments)}</div></div>` : ''}
+            </div>
+          `;
+          checkinsList.appendChild(card);
+        });
+      } else {
+        checkinsList.innerHTML = '<div class="bg-white border border-ink-200 rounded-2xl p-5 text-ink-400 text-sm italic">No check-ins yet.</div>';
+      }
+
+      // --- Milestones ---
+      if (milestones.length) {
+        document.getElementById('milestonesSection').classList.remove('hidden');
+        const list = document.getElementById('milestonesList');
+        milestones.forEach(m => {
+          const li = document.createElement('li');
+          const icon = { log: '📝', workout: '🔥', protein_target: '🥩' }[m.milestone_type] || '⭐';
+          const label = { log: 'food logging', workout: 'workout', protein_target: 'protein target' }[m.milestone_type];
+          li.innerHTML = `${icon} <strong>${m.milestone_value}-day ${label} streak</strong> hit on ${formatDate(m.hit_at)}`;
+          list.appendChild(li);
+        });
+      }
+
+      document.getElementById('loading').classList.add('hidden');
+      document.getElementById('content').classList.remove('hidden');
+    }
+
+    // --- Chart renderers ---
+    const baseChartOpts = {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { grid: { display: false }, ticks: { color: '#94a3b8', font: { size: 10 } } },
+        y: { grid: { color: '#f1f5f9' }, ticks: { color: '#94a3b8', font: { size: 10 } } },
+      },
+    };
+
+    function renderProteinChart(labels, snapshots, client) {
+      const ctx = document.getElementById('proteinChart');
+      new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [
+            {
+              data: snapshots.map(s => s.yesterday_protein_g),
+              borderColor: '#10b981',
+              backgroundColor: 'rgba(16,185,129,.12)',
+              borderWidth: 2.5,
+              tension: 0.3,
+              fill: true,
+              pointRadius: 2,
+              pointHoverRadius: 5,
+            },
+            {
+              data: snapshots.map(() => client.daily_protein_target_g),
+              borderColor: '#cbd5e1',
+              borderWidth: 1.5,
+              borderDash: [6, 4],
+              pointRadius: 0,
+              fill: false,
+            },
+          ],
+        },
+        options: baseChartOpts,
+      });
+    }
+
+    function renderCaloriesChart(labels, snapshots, client) {
+      const ctx = document.getElementById('caloriesChart');
+      new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [
+            {
+              data: snapshots.map(s => s.yesterday_calories),
+              borderColor: '#0ea5e9',
+              backgroundColor: 'rgba(14,165,233,.12)',
+              borderWidth: 2.5,
+              tension: 0.3,
+              fill: true,
+              pointRadius: 2,
+              pointHoverRadius: 5,
+            },
+            {
+              data: snapshots.map(() => client.daily_calorie_target),
+              borderColor: '#cbd5e1',
+              borderWidth: 1.5,
+              borderDash: [6, 4],
+              pointRadius: 0,
+              fill: false,
+            },
+          ],
+        },
+        options: baseChartOpts,
+      });
+    }
+
+    function renderCarbsChart(labels, snapshots, client) {
+      new Chart(document.getElementById('carbsChart'), {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [
+            {
+              data: snapshots.map(s => s.yesterday_carbs_g),
+              borderColor: '#f97316',
+              backgroundColor: 'rgba(249,115,22,.12)',
+              borderWidth: 2.5,
+              tension: 0.3,
+              fill: true,
+              pointRadius: 2,
+              pointHoverRadius: 5,
+            },
+            ...(client.daily_carbs_target_g ? [{
+              data: snapshots.map(() => client.daily_carbs_target_g),
+              borderColor: '#cbd5e1',
+              borderWidth: 1.5,
+              borderDash: [6, 4],
+              pointRadius: 0,
+              fill: false,
+            }] : []),
+          ],
+        },
+        options: baseChartOpts,
+      });
+    }
+
+    function renderFatChart(labels, snapshots, client) {
+      new Chart(document.getElementById('fatChart'), {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [
+            {
+              data: snapshots.map(s => s.yesterday_fat_g),
+              borderColor: '#a855f7',
+              backgroundColor: 'rgba(168,85,247,.12)',
+              borderWidth: 2.5,
+              tension: 0.3,
+              fill: true,
+              pointRadius: 2,
+              pointHoverRadius: 5,
+            },
+            ...(client.daily_fat_target_g ? [{
+              data: snapshots.map(() => client.daily_fat_target_g),
+              borderColor: '#cbd5e1',
+              borderWidth: 1.5,
+              borderDash: [6, 4],
+              pointRadius: 0,
+              fill: false,
+            }] : []),
+          ],
+        },
+        options: baseChartOpts,
+      });
+    }
+
+    function renderWorkoutsChart(labels, snapshots) {
+      const ctx = document.getElementById('workoutsChart');
+      new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [{
+            data: snapshots.map(s => s.workouts_completed_this_week),
+            backgroundColor: '#f59e0b',
+            borderRadius: 4,
+          }],
+        },
+        options: baseChartOpts,
+      });
+    }
+
+    function renderLoggedChart(labels, snapshots) {
+      const ctx = document.getElementById('loggedChart');
+      new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [{
+            data: snapshots.map(s => s.days_logged_last_7),
+            borderColor: '#a855f7',
+            backgroundColor: 'rgba(168,85,247,.12)',
+            borderWidth: 2.5,
+            tension: 0.3,
+            fill: true,
+            pointRadius: 2,
+          }],
+        },
+        options: {
+          ...baseChartOpts,
+          scales: {
+            ...baseChartOpts.scales,
+            y: { ...baseChartOpts.scales.y, min: 0, max: 7, ticks: { stepSize: 1, color: '#94a3b8', font: { size: 10 } } },
+          },
+        },
+      });
+    }
+
+    function formatDate(d) {
+      if (!d) return '';
+      const date = new Date(d);
+      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    }
+
+    function escapeHTML(s) {
+      if (s == null) return '';
+      return String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    load().catch(err => {
+      console.error(err);
+      document.getElementById('loading').innerHTML = '❌ Error loading data: ' + err.message;
+    });
+
+    // ─── QUICK ACTIONS ──────────────────────────────────────────────
+    function wireQuickActions(client) {
+      const status = document.getElementById('quickActionStatus');
+      const setStatus = (msg, color = 'text-ink-500') => {
+        status.textContent = msg;
+        status.className = `text-xs mt-3 ${color}`;
+        status.classList.remove('hidden');
+      };
+
+      // Deactivate / Reactivate buttons
+      const deactBtn = document.getElementById('deactivateBtn');
+      const reactBtn = document.getElementById('reactivateBtn');
+      if (client.is_active === false) {
+        deactBtn.classList.add('hidden');
+        reactBtn.classList.remove('hidden');
+      }
+      const toggleActive = async (newState) => {
+        if (!confirm(`${newState ? 'Reactivate' : 'Deactivate'} ${client.full_name}?`)) return;
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/clients?id=eq.${client.id}`, {
+          method: 'PATCH',
+          headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json', Prefer: 'return=representation' },
+          body: JSON.stringify({ is_active: newState }),
+        });
+        if (res.ok) {
+          alert(`✅ ${newState ? 'Reactivated' : 'Deactivated'} ${client.full_name}.`);
+          window.location.href = '/';
+        } else {
+          alert(`Failed: ${res.status}`);
+        }
+      };
+      deactBtn?.addEventListener('click', () => toggleActive(false));
+      reactBtn?.addEventListener('click', () => toggleActive(true));
+
+      // Onboard button → opens paste modal (Sonnet parses + fires pipeline against existing Trainerize user)
+      const onboardBtn = document.getElementById('onboardClientBtn');
+      if (onboardBtn) onboardBtn.addEventListener('click', () => openOnboardPasteModal(client));
+
+      // Paste-onboard modal (for existing clients who filled out Trainerize's form, not ours)
+      window.openOnboardPasteModal = function(client) {
+        const html = `
+          <div class="fixed inset-0 bg-black/60 z-[80] flex items-center justify-center p-4" id="pasteModal">
+            <div class="bg-white rounded-2xl max-w-2xl w-full max-h-[92vh] flex flex-col">
+              <div class="px-6 py-4 border-b border-ink-200">
+                <div class="text-xs text-violet-600 font-bold tracking-wider">🆕 ONBOARD EXISTING CLIENT</div>
+                <h2 class="text-lg font-bold mt-1">Onboarding ${client.full_name}</h2>
+                <p class="text-xs text-ink-500 mt-1">Paste anything you have: Trainerize intake answers, Fathom call notes, DMs, intake form copy-paste. Sonnet parses → builds macros + workouts + meal plan to-do.</p>
+              </div>
+              <div class="px-6 py-4 overflow-y-auto flex-1 space-y-3">
+                <div>
+                  <label class="block text-xs font-bold uppercase text-ink-500 tracking-wider mb-1">Paste everything you've got</label>
+                  <textarea id="pasteText" rows="14" class="w-full text-sm px-3 py-2 border border-ink-200 rounded-lg focus:outline-none focus:border-violet-500 font-mono" placeholder="Paste Trainerize intake answers, Fathom call summary, DMs, anything else relevant. Sonnet pulls out: age, weight, goals, equipment, food prefs, train days, injuries, etc."></textarea>
+                </div>
+                <div class="text-xs text-ink-500">
+                  <strong class="text-ink-700">Tip:</strong> The more raw context you paste, the better. Include intake answers VERBATIM if possible. Add Fathom call summaries. Mention injury history. Sonnet handles the rest.
+                </div>
+              </div>
+              <div class="px-6 py-3 border-t border-ink-200 flex items-center justify-between bg-ink-50">
+                <button onclick="document.getElementById('pasteModal').remove()" class="text-sm font-semibold text-ink-600 px-3 py-2 hover:bg-ink-100 rounded">Cancel</button>
+                <button id="pasteConfirm" class="text-sm font-semibold bg-violet-600 text-white px-5 py-2 rounded-lg hover:bg-violet-700">▸ Parse + run pipeline</button>
+              </div>
+            </div>
+          </div>
+        `;
+        document.body.insertAdjacentHTML('beforeend', html);
+        document.getElementById('pasteConfirm').addEventListener('click', async () => {
+          const text = document.getElementById('pasteText').value.trim();
+          if (!text) { alert('Paste something first.'); return; }
+          const btn = document.getElementById('pasteConfirm');
+          btn.disabled = true;
+          btn.textContent = '⏳ Parsing (15-30s)...';
+          try {
+            const res = await fetch('/api/intake/synthesize', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                client_id: client.id,
+                client_name: client.full_name,
+                client_email: client.email,
+                trainerize_user_id: client.trainerize_user_id,
+                paste_text: text,
+              }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Synthesize failed');
+            document.getElementById('pasteModal').remove();
+            alert(`✅ Pipeline started for ${client.full_name}. intake_id=${data.intake_id}. Check the 🆕 New Clients panel on dashboard in ~20s.`);
+          } catch (e) {
+            btn.disabled = false;
+            btn.textContent = '▸ Parse + run pipeline';
+            alert('Failed: ' + e.message);
+          }
+        });
+      };
+
+      // Quick actions
+      document.querySelectorAll('[data-quick-action]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const action = btn.dataset.quickAction;
+          const original = btn.innerHTML;
+          btn.disabled = true;
+          btn.style.opacity = '0.6';
+          setStatus(`⏳ Firing ${action}...`);
+          try {
+            const categoryMap = {
+              mealplan: {
+                category: 'mealplan',
+                note: `Build ${client.full_name}'s next meal plan. Use Bella template. Honor food prefs + flags.`,
+                priority: 'high',
+              },
+              midweek: {
+                category: 'check-in',
+                note: `Draft a mid-week update for ${client.full_name}. Pull recent compliance + check-in data. Format: "Hey [name], great work this week so far. Some areas of improvement would be A, B, and C." Then send via Trainerize.`,
+                priority: 'normal',
+              },
+              'recalc-macros': {
+                category: 'calorie',
+                note: `Update nutrition goals for ${client.full_name} based on recent progress. Pull last 4 weeks weight + compliance, recalc macros if trajectory off, push new goals to Trainerize via /goal/set.`,
+                priority: 'high',
+              },
+              'rebuild-workouts': {
+                category: 'workout',
+                note: `Build new workout program for ${client.full_name} starting next Monday. Pull last 30 days of Trainerize messages to inform program direction. Propose split → review → push to Trainerize.`,
+                priority: 'high',
+              },
+            };
+            const spec = categoryMap[action];
+            if (!spec) throw new Error('Unknown action');
+            const ctx = { trainerize_user_id: client.trainerize_user_id ? Number(client.trainerize_user_id) : null, client_id: client.id };
+            const res = await fetch('/api/todos', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                client_name: client.full_name,
+                category: spec.category,
+                note: spec.note,
+                source: 'chat',
+                priority: spec.priority,
+                context: ctx,
+              }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'To-do create failed');
+            const todoId = data.todo?.id;
+            setStatus(`✅ To-do #${todoId} created. Firing executor...`, 'text-emerald-700');
+
+            const execRes = await fetch(`/api/todos/${todoId}/execute`, { method: 'POST' });
+            const execData = await execRes.json();
+            if (!execRes.ok) throw new Error(execData.error || 'Execute failed');
+            const emoji = { completed: '✅', blocked: '🚧', needs_input: '⚠️', failed: '❌' }[execData.status] || 'ℹ️';
+            setStatus(`${emoji} ${execData.status.toUpperCase()}: ${(execData.result || '').slice(0, 200)}`, execData.status === 'completed' ? 'text-emerald-700' : 'text-amber-700');
+            alert(`${emoji} ${execData.status.toUpperCase()}\n\n${(execData.result || '').slice(0, 800)}`);
+          } catch (e) {
+            setStatus(`❌ Failed: ${e.message}`, 'text-red-700');
+            alert('Quick action failed: ' + e.message);
+          } finally {
+            btn.disabled = false;
+            btn.style.opacity = '1';
+            btn.innerHTML = original;
+          }
+        });
+      });
+    }
+  </script>
+
+</body>
+</html>

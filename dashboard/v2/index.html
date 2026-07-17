@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="light" />
+  <title>Faerber Client OS · v2</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <!-- Left sticky nav -->
+    <aside class="nav" aria-label="Primary">
+      <div class="nav-brand">
+        <div class="brand-mark">B</div>
+        <div class="brand-text">
+          <div class="brand-name">Faerber</div>
+          <div class="brand-sub">Client OS · v2</div>
+        </div>
+      </div>
+
+      <nav class="nav-list" role="tablist">
+        <button class="nav-item" data-tab="overview" role="tab" aria-selected="true">
+          <span class="nav-icon">◐</span>
+          <span class="nav-label">Overview</span>
+        </button>
+        <button class="nav-item" data-tab="sales" role="tab">
+          <span class="nav-icon">↗</span>
+          <span class="nav-label">Sales</span>
+        </button>
+        <button class="nav-item" data-tab="ads" role="tab">
+          <span class="nav-icon">◈</span>
+          <span class="nav-label">Ads</span>
+        </button>
+        <button class="nav-item" data-tab="team" role="tab">
+          <span class="nav-icon">◇</span>
+          <span class="nav-label">Team KPI</span>
+        </button>
+        <button class="nav-item" data-tab="clients" role="tab">
+          <span class="nav-icon">◔</span>
+          <span class="nav-label">Clients</span>
+        </button>
+        <button class="nav-item" data-tab="capacity" role="tab">
+          <span class="nav-icon">▤</span>
+          <span class="nav-label">Coach Capacity</span>
+        </button>
+        <button class="nav-item" data-tab="pnl" role="tab">
+          <span class="nav-icon">§</span>
+          <span class="nav-label">P&amp;L</span>
+        </button>
+        <button class="nav-item" data-tab="company-kpi" role="tab">
+          <span class="nav-icon">▦</span>
+          <span class="nav-label">Company KPI</span>
+        </button>
+      </nav>
+
+      <div class="nav-footer">
+        <a class="nav-legacy" href="/legacy">Legacy dashboard →</a>
+        <div class="nav-status" id="nav-status">
+          <span class="dot"></span>
+          <span id="nav-status-text">Connecting…</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main -->
+    <main class="main">
+      <header class="top">
+        <div>
+          <h1 id="page-title">Overview</h1>
+          <p id="page-sub" class="page-sub">Cash, ROAS, active clients, upcoming resigns.</p>
+        </div>
+        <div class="top-actions">
+          <div class="range-picker" id="range-picker">
+            <button class="range-btn active" data-period="mtd">MTD</button>
+            <button class="range-btn" data-period="7d">7d</button>
+            <button class="range-btn" data-period="30d">30d</button>
+            <button class="range-btn" data-period="90d">90d</button>
+            <button class="range-btn" data-period="ytd">YTD</button>
+          </div>
+          <button class="btn ghost" id="refresh-btn" title="Refresh data">↻ Refresh</button>
+        </div>
+      </header>
+
+      <section id="tab-root" class="tab-root" role="tabpanel">
+        <!-- tabs render here -->
+      </section>
+    </main>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+{
+  "name": "faerber-client-os-server",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.98.0",
+    "@supabase/supabase-js": "^2.108.1",
+    "dotenv": "^17.4.2",
+    "express": "^4.19.0",
+    "formdata-node": "^6.0.3",
+    "iceberg-js": "^1.0.0",
+    "pdfkit": "^0.19.1",
+    "playwright": "^1.60.0"
+  }
+}
