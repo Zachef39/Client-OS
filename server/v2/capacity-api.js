@@ -98,7 +98,12 @@ export function registerCapacityRoutes({ app, supabase }) {
       });
     } catch (e) {
       console.error('[capacity/summary]', e);
-      res.status(500).json({ error: e.message });
+      res.status(200).json({
+        _error: e.message,
+        _partial: true,
+        totals: { total_coaches: 0, coaches_at_80: 0, coaches_at_100: 0, unassigned_clients: 0 },
+        coaches: [],
+      });
     }
   });
 

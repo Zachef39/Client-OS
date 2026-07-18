@@ -133,7 +133,13 @@ export function registerV2Routes({ app, supabase }) {
 
       res.json({ window: { start, end, days }, totals, campaigns });
     } catch (e) {
-      res.status(500).json({ error: e.message });
+      console.error('[ads/summary]', e);
+      res.status(200).json({
+        _error: e.message, _partial: true,
+        window: { start, end, days },
+        totals: { spend: 0, impressions: 0, clicks: 0, messages: 0, booked_calls: 0, shown_calls: 0, closed: 0, cash_collected: 0, cash_contracted: 0, roas: null, cpm: null, cpl: null, cpbc: null },
+        campaigns: [],
+      });
     }
   });
 
@@ -168,7 +174,11 @@ export function registerV2Routes({ app, supabase }) {
 
       res.json({ window: { start, end, days }, rows: list, spend_series, cash_series, roas_series });
     } catch (e) {
-      res.status(500).json({ error: e.message });
+      console.error('[ads/daily]', e);
+      res.status(200).json({
+        _error: e.message, _partial: true,
+        window: { start, end, days }, rows: [], spend_series: [], cash_series: [], roas_series: [],
+      });
     }
   });
 
