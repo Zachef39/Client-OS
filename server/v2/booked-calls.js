@@ -18,11 +18,20 @@ const GHL_VERSION_CALENDARS = '2021-04-15';
 const GHL_VERSION_CONTACTS = '2021-07-28';
 
 // ── Rules ─────────────────────────────────────────────────
-// SHOWN = strict whitelist per Zach 2026-07-18. Only outcomes where the call
-// actually happened AND you got to pitch. DQ/Canceled/Nurture/Rebooked/blank
-// are NOT shown — they either didn't show or never got to a real pitch.
-const SHOWN_OUTCOMES = new Set(['Sold', 'Unsuccessful', 'Bloodwork Only']);
+// Per Zach 2026-07-18 v2:
+// - COMPLETED = past-date call w/ outcome set (Sales Call Booked = not completed, blank = not completed)
+// - PITCHED (aka "shown") = COMPLETED w/ outcome IN (Sold, Unsuccessful, Bloodwork Only) — offer given
+// - CLOSED = COMPLETED w/ outcome IN (Sold, Bloodwork Only) — actual sale
+// - Future-dated calls = UPCOMING, never counted in rate denominators
+const PITCHED_OUTCOMES = new Set(['Sold', 'Unsuccessful', 'Bloodwork Only']);
 const CLOSED_OUTCOMES = new Set(['Sold', 'Bloodwork Only', 'Bloodwork Sold']);
+const DQ_OUTCOMES = new Set(['DQ']);
+const NO_SHOW_OUTCOMES = new Set(['No Show']);
+const CANCELED_OUTCOMES = new Set(['Canceled']);
+const NURTURE_OUTCOMES = new Set(['Nurture']);
+const REBOOKED_OUTCOMES = new Set(['Needs Rebooking', 'Rebooked']);
+// Outcomes that indicate the call hasn't happened yet:
+const NOT_YET_OUTCOMES = new Set(['', 'Sales Call Booked', '45 Qualified']);
 
 // Monday column IDs (verified against board 18372257888 on 2026-07-17).
 const MONDAY_COL = {
@@ -202,25 +211,56 @@ async function ghlEventToUnified(ev, calendarName) {
   };
 }
 
-// ── Classify per Zach's rules ────────────────────────────
-export function classify(item) {
+// ── Classify per Zach's rules v2 (2026-07-18) ────────────
+// Returns flags so downstream can bucket cleanly:
+//   is_booked      — call has a date (past or future)
+//   is_upcoming    — future date, hasn't happened yet — EXCLUDED from all rates
+//   is_completed   — past date w/ outcome set (real completed call)
+//   is_pitched     — completed AND outcome = Sold/Unsuccessful/Bloodwork Only
+//   is_closed      — completed AND outcome = Sold/Bloodwork Only
+//   is_dq          — completed AND outcome = DQ
+//   is_no_show     — completed AND outcome = No Show
+//   is_canceled    — completed AND outcome = Canceled
+//   is_nurture     — completed AND outcome = Nurture
+//   is_rebooked    — Needs Rebooking / Rebooked (may or may not be past-dated)
+export function classify(item, todayISO) {
   const outcome = (item.outcome || '').trim();
-  // Booked: everything present is booked; the caller filters by date window before counting.
-  const is_booked = true;
+  const bookedDate = item.booked_date; // YYYY-MM-DD
+  const today = todayISO || new Date().toISOString().slice(0, 10);
 
-  // Shown: strict whitelist per Zach 2026-07-18.
-  // Only Sold / Unsuccessful / Bloodwork Only count as "call actually happened + pitched."
-  // GHL-only rows w/o Monday outcome fall back to GHL appointmentStatus (showed/confirmed).
-  let is_shown;
-  if (item.source === 'ghl' && !outcome) {
-    const st = (item._ghl_status || '').toLowerCase();
-    is_shown = st === 'showed'; // don't count 'confirmed' — that's just they clicked confirm, not that they showed
-  } else {
-    is_shown = SHOWN_OUTCOMES.has(outcome);
+  const is_booked = true;
+  const is_upcoming = bookedDate && bookedDate > today;
+  // Past-dated OR no-date (rare) counts as "should have happened"
+  const isPastDate = bookedDate && bookedDate <= today;
+
+  // Completed: past date AND outcome is real (not blank / Sales Call Booked / 45 Qualified)
+  let is_completed = false;
+  if (isPastDate) {
+    if (item.source === 'ghl' && !outcome) {
+      // GHL row w/o Monday outcome — use appointmentStatus
+      const st = (item._ghl_status || '').toLowerCase();
+      is_completed = st === 'showed';
+    } else {
+      is_completed = !NOT_YET_OUTCOMES.has(outcome);
+    }
   }
 
-  const is_closed = CLOSED_OUTCOMES.has(outcome);
-  return { is_booked, is_shown, is_closed };
+  const is_pitched = is_completed && PITCHED_OUTCOMES.has(outcome);
+  const is_closed = is_completed && CLOSED_OUTCOMES.has(outcome);
+  const is_dq = is_completed && DQ_OUTCOMES.has(outcome);
+  const is_no_show = is_completed && NO_SHOW_OUTCOMES.has(outcome);
+  const is_canceled = is_completed && CANCELED_OUTCOMES.has(outcome);
+  const is_nurture = is_completed && NURTURE_OUTCOMES.has(outcome);
+  const is_rebooked = REBOOKED_OUTCOMES.has(outcome);
+
+  // Legacy alias — some callers still reference is_shown
+  const is_shown = is_pitched;
+
+  return {
+    is_booked, is_upcoming, is_completed,
+    is_pitched, is_closed, is_dq, is_no_show, is_canceled, is_nurture, is_rebooked,
+    is_shown, // legacy
+  };
 }
 
 // ── Dedupe ───────────────────────────────────────────────
@@ -324,71 +364,105 @@ export async function fetchBookedCallsUnified(days) {
 
 // ── Aggregations ─────────────────────────────────────────
 export function summarize(items) {
-  let booked = 0, shown = 0, closed = 0;
+  const today = new Date().toISOString().slice(0, 10);
+  let booked = 0, upcoming = 0, completed = 0;
+  let pitched = 0, closed = 0, dq = 0, no_show = 0, canceled = 0, nurture = 0, rebooked = 0;
   let cash_collected = 0, cash_contracted = 0;
   const bySource = { monday: 0, ghl: 0, both: 0 };
 
   for (const item of items) {
-    const c = classify(item);
+    const c = classify(item, today);
     if (c.is_booked) booked += 1;
-    if (c.is_shown) shown += 1;
+    if (c.is_upcoming) upcoming += 1;
+    if (c.is_completed) completed += 1;
+    if (c.is_pitched) pitched += 1;
     if (c.is_closed) closed += 1;
+    if (c.is_dq) dq += 1;
+    if (c.is_no_show) no_show += 1;
+    if (c.is_canceled) canceled += 1;
+    if (c.is_nurture) nurture += 1;
+    if (c.is_rebooked) rebooked += 1;
     cash_collected += Number(item.cash_collected || 0);
     cash_contracted += Number(item.cash_contracted || 0);
     bySource[item.source] = (bySource[item.source] || 0) + 1;
   }
   return {
-    booked, shown, closed,
+    // Volume buckets — never overlap for the same call
+    booked, upcoming, completed,
+    pitched, closed, dq, no_show, canceled, nurture, rebooked,
+    // Cash
     cash_collected, cash_contracted,
-    close_rate: shown > 0 ? closed / shown : null,
-    show_rate: booked > 0 ? shown / booked : null,
+    // Rates (per Zach 2026-07-18 v2)
+    show_rate: completed > 0 ? pitched / completed : null,   // pitched / completed
+    close_rate: pitched > 0 ? closed / pitched : null,        // closed / pitched
+    dq_rate: completed > 0 ? dq / completed : null,           // dq / completed
+    // Legacy field names for backwards compat
+    shown: pitched,
     by_source: bySource,
   };
 }
 
 function bumpAgg(map, key) {
-  if (!map[key]) map[key] = { key, booked: 0, shown: 0, closed: 0, cash_collected: 0, cash_contracted: 0 };
+  if (!map[key]) map[key] = { key, booked: 0, upcoming: 0, completed: 0, pitched: 0, closed: 0, dq: 0, no_show: 0, cash_collected: 0, cash_contracted: 0 };
   return map[key];
 }
 
 export function groupByCloser(items) {
+  const today = new Date().toISOString().slice(0, 10);
   const map = {};
   for (const item of items) {
     const key = item.closer_assigned || '(unassigned)';
     const row = bumpAgg(map, key);
-    const c = classify(item);
+    const c = classify(item, today);
     if (c.is_booked) row.booked += 1;
-    if (c.is_shown) row.shown += 1;
+    if (c.is_upcoming) row.upcoming += 1;
+    if (c.is_completed) row.completed += 1;
+    if (c.is_pitched) row.pitched += 1;
     if (c.is_closed) row.closed += 1;
+    if (c.is_dq) row.dq += 1;
+    if (c.is_no_show) row.no_show += 1;
     row.cash_collected += Number(item.cash_collected || 0);
     row.cash_contracted += Number(item.cash_contracted || 0);
   }
   return Object.values(map).map(r => ({
     closer: r.key,
-    booked: r.booked, shown: r.shown, closed: r.closed,
-    cash_collected: r.cash_collected, cash_contracted: r.cash_contracted,
-    close_rate: r.shown > 0 ? r.closed / r.shown : null,
+    booked: r.booked,
+    upcoming: r.upcoming,
+    completed: r.completed,
+    pitched: r.pitched,
+    closed: r.closed,
+    dq: r.dq,
+    no_show: r.no_show,
+    cash_collected: r.cash_collected,
+    cash_contracted: r.cash_contracted,
+    show_rate: r.completed > 0 ? r.pitched / r.completed : null,
+    close_rate: r.pitched > 0 ? r.closed / r.pitched : null,
+    dq_rate: r.completed > 0 ? r.dq / r.completed : null,
+    // Legacy alias for old dashboard code
+    shown: r.pitched,
   })).sort((a, b) => b.cash_collected - a.cash_collected);
 }
 
 export function groupBySetter(items) {
+  const today = new Date().toISOString().slice(0, 10);
   const map = {};
   for (const item of items) {
     const raw = item.setter_assigned || '(unassigned)';
-    // Monday multi-person can be comma-separated ("Spencer Stevens, Dina Kay")
     const names = raw === '(unassigned)' ? ['(unassigned)'] : raw.split(',').map(s => s.trim()).filter(Boolean);
     for (const name of names) {
       const row = bumpAgg(map, name);
-      const c = classify(item);
+      const c = classify(item, today);
       if (c.is_booked) row.booked += 1;
+      if (c.is_completed) row.completed += 1;
       if (c.is_closed) row.closed += 1;
     }
   }
   return Object.values(map).map(r => ({
     setter: r.key,
     booked: r.booked,
+    completed: r.completed,
     closed: r.closed,
-    dms_sent: null, // placeholder — VA DM volume comes from team-kpi
+    dms_sent: null,
   })).sort((a, b) => b.booked - a.booked);
 }
 
