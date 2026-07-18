@@ -3,6 +3,10 @@
 // Run: cd server && node server.js
 // Then: http://localhost:3737
 
+// Force IPv4 DNS on Railway → Supabase (Node 22's undici prefers IPv6, Supabase pooler is IPv4-only).
+import dns from 'dns';
+dns.setDefaultResultOrder('ipv4first');
+
 import express from 'express';
 import { spawn } from 'child_process';
 import { createClient } from '@supabase/supabase-js';
