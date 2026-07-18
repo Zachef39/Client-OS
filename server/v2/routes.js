@@ -354,26 +354,61 @@ export function registerV2Routes({ app, supabase }) {
   });
 
   // ── Overview ───────────────────────────────────────
+  // Full response cached 60s so the CEO landing tab is instant on repeat visits.
   app.get('/api/v2/overview', async (req, res) => {
     const days = Math.max(1, Math.min(365, Number(req.query.days) || 30));
     const { start, end } = windowFromDays(days);
-
     try {
-      // Active clients + new this month
+      const payload = await cached(`overview:${days}`, 60_000, () => buildOverview({ supabase, days, start, end }));
+      res.json(payload);
+    } catch (e) {
+      console.error('[overview]', e);
+      res.status(200).json({
+        _error: e.message, _partial: true,
+        window: { start, end, days },
+        mtd: { cash_collected: 0, cash_contracted: 0 },
+        ads: { spend: 0, cash_from_ads: 0, roas: null, spark_spend: [], spark_cash: [] },
+        clients: { active: 0, new_this_month: 0 },
+        resigns: { critical: 0, urgent: 0, watch: 0, upcoming: [] },
+        coaches: [],
+      });
+    }
+  });
+
+  // Inline builder — parallelizes ALL Supabase calls + Monday call so worst-case
+  // = single-longest call, not sum. Every chunk fault-tolerant → partial data on failure.
+  async function buildOverview({ supabase, days, start, end }) {
       const monthStart = new Date();
       monthStart.setDate(1);
       const monthStartStr = monthStart.toISOString().slice(0, 10);
+      const warnings = [];
 
-      const [{ count: activeCount }, { count: newThisMonth }] = await Promise.all([
+      const [
+        activeCountRes,
+        newThisMonthRes,
+        countdownRes,
+        coachesRes,
+        adRowsRes,
+        mondayItemsRes,
+      ] = await Promise.allSettled([
         supabase.from('clients').select('id', { count: 'exact', head: true }).eq('is_active', true),
         supabase.from('clients').select('id', { count: 'exact', head: true }).gte('start_date', monthStartStr),
+        supabase.from('client_countdown').select('id, full_name, coach_name, days_until_resign, tier, programmed_to').order('days_until_resign', { ascending: true }),
+        supabase.from('coach_capacity').select('coach_name, active_clients, max_capacity, pct_full').order('active_clients', { ascending: false }),
+        supabase.from('ad_metrics').select('date, spend, cash_collected').gte('date', start).lte('date', end).order('date', { ascending: true }),
+        cached('monday:items', 60_000, fetchBookedCallsItems).catch(err => { warnings.push(`monday: ${err.message}`); return []; }),
       ]);
 
-      // Countdown tiers
-      const { data: countdown } = await supabase
-        .from('client_countdown')
-        .select('id, full_name, coach_name, days_until_resign, tier, programmed_to')
-        .order('days_until_resign', { ascending: true });
+      const val = (settled, label, fallback = null) => {
+        if (settled.status !== 'fulfilled') { warnings.push(`${label}: ${settled.reason?.message || 'failed'}`); return fallback; }
+        return settled.value;
+      };
+      const activeCount = val(activeCountRes, 'active_clients', { count: 0 })?.count || 0;
+      const newThisMonth = val(newThisMonthRes, 'new_this_month', { count: 0 })?.count || 0;
+      const countdown = val(countdownRes, 'countdown', { data: [] })?.data || [];
+      const coaches = val(coachesRes, 'coach_capacity', { data: [] })?.data || [];
+      const adRows = val(adRowsRes, 'ad_metrics', { data: [] })?.data || [];
+      const mondayItems = mondayItemsRes.status === 'fulfilled' ? mondayItemsRes.value : [];
 
       const upcoming = (countdown || []).filter(c => c.days_until_resign != null && c.days_until_resign <= 30);
       const resigns = {
@@ -383,22 +418,8 @@ export function registerV2Routes({ app, supabase }) {
         upcoming: upcoming.slice(0, 12),
       };
 
-      // Coach load
-      const { data: coaches } = await supabase
-        .from('coach_capacity')
-        .select('coach_name, active_clients, max_capacity, pct_full')
-        .order('active_clients', { ascending: false });
-
-      // Ads window rollup for spark + ROAS
-      const { data: adRows } = await supabase
-        .from('ad_metrics')
-        .select('date, spend, cash_collected')
-        .gte('date', start)
-        .lte('date', end)
-        .order('date', { ascending: true });
-
       const byDay = {};
-      for (const r of adRows || []) {
+      for (const r of adRows) {
         if (!byDay[r.date]) byDay[r.date] = { spend: 0, cash: 0 };
         byDay[r.date].spend += Number(r.spend || 0);
         byDay[r.date].cash += Number(r.cash_collected || 0);
@@ -409,19 +430,20 @@ export function registerV2Routes({ app, supabase }) {
       const totalSpend = spark_spend.reduce((s, v) => s + v, 0);
       const totalCashAds = spark_cash.reduce((s, v) => s + v, 0);
 
-      // MTD cash from Monday (real source of truth) — cached
+      // MTD cash from Monday snapshot (already fetched above).
       let mtdCashCollected = 0;
       let mtdCashContracted = 0;
-      try {
-        const items = await cached('monday:items', 60_000, fetchBookedCallsItems);
-        const mtd = computeSalesSummary(items, monthStartStr, end);
-        mtdCashCollected = mtd.cash_collected;
-        mtdCashContracted = mtd.cash_contracted;
-      } catch (_) {
-        // Ok — Monday unreachable, MTD stays 0.
+      if (mondayItems.length) {
+        try {
+          const mtd = computeSalesSummary(mondayItems, monthStartStr, end);
+          mtdCashCollected = mtd.cash_collected;
+          mtdCashContracted = mtd.cash_contracted;
+        } catch (err) {
+          warnings.push(`mtd_summary: ${err.message}`);
+        }
       }
 
-      res.json({
+      return {
         window: { start, end, days },
         mtd: { cash_collected: mtdCashCollected, cash_contracted: mtdCashContracted },
         ads: {
@@ -440,21 +462,9 @@ export function registerV2Routes({ app, supabase }) {
           ...c,
           pct_full: Number(c.pct_full),
         })),
-      });
-    } catch (e) {
-      console.error('[overview]', e);
-      res.status(200).json({
-        _error: e.message,
-        _partial: true,
-        window: { start, end, days },
-        mtd: { cash_collected: 0, cash_contracted: 0 },
-        ads: { spend: 0, cash_from_ads: 0, roas: null, spark_spend: [], spark_cash: [] },
-        clients: { active: 0, new_this_month: 0 },
-        resigns: { critical: 0, urgent: 0, watch: 0, upcoming: [] },
-        coaches: [],
-      });
-    }
-  });
+        ...(warnings.length ? { _warnings: warnings, _partial: true } : {}),
+      };
+  }
 
   // ── Team KPI ───────────────────────────────────────
   // Seed a sample row so the UI has something to render on first boot.
