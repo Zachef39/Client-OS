@@ -18,7 +18,10 @@ const GHL_VERSION_CALENDARS = '2021-04-15';
 const GHL_VERSION_CONTACTS = '2021-07-28';
 
 // ── Rules ─────────────────────────────────────────────────
-const NOT_SHOWN_OUTCOMES = new Set(['No Show', 'Needs Rebooking', '']);
+// SHOWN = strict whitelist per Zach 2026-07-18. Only outcomes where the call
+// actually happened AND you got to pitch. DQ/Canceled/Nurture/Rebooked/blank
+// are NOT shown — they either didn't show or never got to a real pitch.
+const SHOWN_OUTCOMES = new Set(['Sold', 'Unsuccessful', 'Bloodwork Only']);
 const CLOSED_OUTCOMES = new Set(['Sold', 'Bloodwork Only', 'Bloodwork Sold']);
 
 // Monday column IDs (verified against board 18372257888 on 2026-07-17).
@@ -205,15 +208,15 @@ export function classify(item) {
   // Booked: everything present is booked; the caller filters by date window before counting.
   const is_booked = true;
 
-  // Shown: outcome NOT in {No Show, Needs Rebooking, blank}.
-  // Special case: GHL-only rows have no outcome — treat as booked-but-status-unknown → NOT shown.
+  // Shown: strict whitelist per Zach 2026-07-18.
+  // Only Sold / Unsuccessful / Bloodwork Only count as "call actually happened + pitched."
+  // GHL-only rows w/o Monday outcome fall back to GHL appointmentStatus (showed/confirmed).
   let is_shown;
   if (item.source === 'ghl' && !outcome) {
-    // fall back to GHL's own appointmentStatus if present
     const st = (item._ghl_status || '').toLowerCase();
-    is_shown = st === 'showed' || st === 'confirmed';
+    is_shown = st === 'showed'; // don't count 'confirmed' — that's just they clicked confirm, not that they showed
   } else {
-    is_shown = !NOT_SHOWN_OUTCOMES.has(outcome);
+    is_shown = SHOWN_OUTCOMES.has(outcome);
   }
 
   const is_closed = CLOSED_OUTCOMES.has(outcome);
