@@ -74,6 +74,20 @@ function guardLocalOnly(res, feature) {
 const app = express();
 app.use(express.json({ limit: '2mb' }));
 
+// ─── Request timing (slow-request log) ───
+// Logs any request >3s so Railway logs surface the specific external calls
+// that are the bottleneck. Uses console.warn so it stands out from noise.
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on('finish', () => {
+    const ms = Date.now() - start;
+    if (ms > 3000) {
+      console.warn(`[slow] ${req.method} ${req.path} ${res.statusCode} ${ms}ms`);
+    }
+  });
+  next();
+});
+
 // CORS — local dev
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');

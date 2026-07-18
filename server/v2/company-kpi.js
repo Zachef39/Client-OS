@@ -16,6 +16,8 @@
 //   - Rocket Total   : placeholder null — finance system feeds later.
 
 import { fetchBookedCallsItems } from './monday-sales.js';
+import { fetchRetry } from './http.js';
+import { cachedFetch } from './cache.js';
 
 const MONDAY_API = 'https://api.monday.com/v2';
 
@@ -57,7 +59,7 @@ function requireEnv(name) {
 
 async function mondayQuery(query) {
   const token = requireEnv('MONDAY_API_TOKEN');
-  const res = await fetch(MONDAY_API, {
+  const res = await fetchRetry(MONDAY_API, {
     method: 'POST',
     headers: { Authorization: token, 'Content-Type': 'application/json' },
     body: JSON.stringify({ query }),

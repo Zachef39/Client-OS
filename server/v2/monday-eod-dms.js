@@ -1,4 +1,6 @@
 // Monday EOD - DMs board reader (id 9743873934).
+//
+// Uses fetchRetry so a flaky Monday response doesn't tank team-KPI endpoints.
 // Each item = 1 setter's daily EOD entry. Columns confirmed 2026-07-17:
 //   person (people)         — DMer
 //   date4 (date)             — the day being reported on
@@ -6,6 +8,8 @@
 //
 // The board does NOT track DMs Sent per setter — only calls booked. If Zach
 // ever adds a DMs Sent column, extend `MONDAY_COL` + `parseItem` below.
+
+import { fetchRetry } from './http.js';
 
 const MONDAY_API = 'https://api.monday.com/v2';
 const BOARD_ID = '9743873934';
@@ -28,7 +32,7 @@ function requireEnv(name) {
 
 async function mondayQuery(query) {
   const token = requireEnv('MONDAY_API_TOKEN');
-  const res = await fetch(MONDAY_API, {
+  const res = await fetchRetry(MONDAY_API, {
     method: 'POST',
     headers: { Authorization: token, 'Content-Type': 'application/json' },
     body: JSON.stringify({ query }),

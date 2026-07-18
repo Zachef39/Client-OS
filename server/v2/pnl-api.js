@@ -2,6 +2,8 @@
 // Wired into routes.js by registerPnlRoutes({ app, supabase, anthropic }).
 
 import Anthropic from '@anthropic-ai/sdk';
+import { fetchRetry } from './http.js';
+import { cachedFetch } from './cache.js';
 
 // ─── Windows ───────────────────────────────────────────────
 function todayISO() {
@@ -259,7 +261,7 @@ async function fetchOneAccount(label, key, startTs, endTs) {
     });
     if (startingAfter) params.set('starting_after', startingAfter);
 
-    const res = await fetch(`https://api.stripe.com/v1/charges?${params}`, {
+    const res = await fetchRetry(`https://api.stripe.com/v1/charges?${params}`, {
       headers: { Authorization: `Bearer ${key}` },
     });
     if (!res.ok) {
@@ -286,8 +288,14 @@ async function fetchOneAccount(label, key, startTs, endTs) {
 /**
  * Fetch succeeded Stripe charges across all configured accounts between start/end.
  * Returns { total, by_day: { [YYYY-MM-DD]: sum }, count, by_account: [{label,total,count}], warnings[] }.
+ *
+ * Cached 5 min per window — Stripe charge history only changes when new charges land.
  */
 export async function fetchStripeRevenue(start, end) {
+  return cachedFetch(`stripe:${start}:${end}`, 5 * 60 * 1000, () => _fetchStripeRevenueRaw(start, end));
+}
+
+async function _fetchStripeRevenueRaw(start, end) {
   const configured = STRIPE_ACCOUNTS.filter(a => process.env[a.env]);
   if (!configured.length) {
     return {

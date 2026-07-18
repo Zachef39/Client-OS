@@ -467,6 +467,8 @@ async function computeTopMovers(supabase) {
 }
 
 // ─── Register ────────────────────────────────────────────────
+// All endpoints degrade to a 200 partial payload on failure — the dashboard
+// renders a "partial data" chip instead of showing a red full-page banner.
 export function registerOverviewRoutes({ app, supabase }) {
   app.get('/api/v2/overview/kpis', async (_req, res) => {
     try {
@@ -474,7 +476,14 @@ export function registerOverviewRoutes({ app, supabase }) {
       res.json(out);
     } catch (e) {
       console.error('[overview/kpis]', e);
-      res.status(500).json({ error: e.message });
+      res.status(200).json({
+        _error: e.message, _partial: true,
+        synced_at: new Date().toISOString(),
+        mtd: { cash_collected: 0, cash_contracted: 0, cash_delta_wow: { pct: null, dir: 'flat' } },
+        ads: { spend: 0, roas: null, cash_from_ads: 0, spend_delta_wow: { pct: null, dir: 'flat' }, spark_spend: [], spark_cash: [] },
+        clients: { active: 0, new_this_month: 0 },
+        resigns: { critical: 0, critical_7d: 0, urgent: 0, watch: 0, total_30d: 0 },
+      });
     }
   });
 
@@ -484,7 +493,7 @@ export function registerOverviewRoutes({ app, supabase }) {
       res.json(out);
     } catch (e) {
       console.error('[overview/action-queue]', e);
-      res.status(500).json({ error: e.message });
+      res.status(200).json({ _error: e.message, _partial: true, synced_at: new Date().toISOString(), actions: [] });
     }
   });
 
@@ -494,7 +503,7 @@ export function registerOverviewRoutes({ app, supabase }) {
       res.json(out);
     } catch (e) {
       console.error('[overview/wow]', e);
-      res.status(500).json({ error: e.message });
+      res.status(200).json({ _error: e.message, _partial: true, synced_at: new Date().toISOString() });
     }
   });
 
@@ -504,7 +513,7 @@ export function registerOverviewRoutes({ app, supabase }) {
       res.json(out);
     } catch (e) {
       console.error('[overview/top-movers]', e);
-      res.status(500).json({ error: e.message });
+      res.status(200).json({ _error: e.message, _partial: true, synced_at: new Date().toISOString() });
     }
   });
 }

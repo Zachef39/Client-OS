@@ -9,8 +9,24 @@
 import { spawn } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { cachedFetch } from './cache.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Per-Supabase-call cap so one slow query can't hold up whole endpoint.
+// Node's AbortSignal.timeout is Node 17+ — Railway/Docker ship recent Node, safe.
+const SUPABASE_TIMEOUT_MS = 10_000;
+function sbSignal() {
+  // Wrap in try — bail to unsignalled fetch on old runtimes rather than crash.
+  try { return AbortSignal.timeout(SUPABASE_TIMEOUT_MS); }
+  catch { return undefined; }
+}
+// supabase-js supports .abortSignal() on QueryBuilder — attach if available.
+function withTimeout(query) {
+  const sig = sbSignal();
+  if (!sig || typeof query.abortSignal !== 'function') return query;
+  return query.abortSignal(sig);
+}
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
 const TIERS = new Set(['critical', 'urgent', 'watch', 'monitor', 'ok', 'unknown']);
@@ -124,19 +140,33 @@ function computeProgress({ starting_weight, goal_weight, start_date, latest_weig
 
 /**
  * Fetch base countdown rows once + hydrate the roster with last note date + open todo count.
+ * Returns { rows, warnings[] } — never throws so the endpoint can degrade to partial.
  */
 async function loadRosterBase(supabase) {
-  const [{ data: countdown, error: cdErr }, { data: clientsRaw, error: cErr }] = await Promise.all([
-    supabase
+  const warnings = [];
+  const [countdownRes, clientsRes] = await Promise.allSettled([
+    withTimeout(supabase
       .from('client_countdown')
-      .select('id, full_name, coach_name, programmed_to, days_until_resign, tier'),
-    supabase
+      .select('id, full_name, coach_name, programmed_to, days_until_resign, tier')),
+    withTimeout(supabase
       .from('clients')
       .select('id, full_name, assigned_coach, client_status, is_active, is_internal, email, phone, instagram_handle, start_date, goal, goal_weight_lbs, starting_weight_lbs, daily_calorie_target, daily_protein_target_g, program_term, program_dropdown, age, location, weekly_target_workouts')
-      .eq('is_active', true),
+      .eq('is_active', true)),
   ]);
-  if (cdErr) throw cdErr;
-  if (cErr) throw cErr;
+
+  const countdown = countdownRes.status === 'fulfilled' && !countdownRes.value.error
+    ? countdownRes.value.data
+    : (warnings.push(`countdown: ${countdownRes.reason?.message || countdownRes.value?.error?.message}`), []);
+  const clientsRaw = clientsRes.status === 'fulfilled' && !clientsRes.value.error
+    ? clientsRes.value.data
+    : (warnings.push(`clients: ${clientsRes.reason?.message || clientsRes.value?.error?.message}`), []);
+
+  // If BOTH failed we can't render anything meaningful — surface an error.
+  if (!countdown?.length && !clientsRaw?.length && warnings.length >= 2) {
+    const err = new Error(`roster unreachable: ${warnings.join('; ')}`);
+    err._roster_failed = true;
+    throw err;
+  }
 
   const clientMap = new Map();
   for (const c of clientsRaw || []) clientMap.set(c.id, c);
@@ -167,89 +197,101 @@ async function loadRosterBase(supabase) {
     };
   });
 
-  return { rows, clientMap };
+  return { rows, clientMap, warnings };
 }
 
-/** Batch-load last note per client_id + open todo count per client_id + latest check-in + churn risk. */
+/**
+ * Batch-load last note per client_id + open todo count per client_id + latest check-in + churn risk.
+ * Never throws — any chunk that fails returns empty + adds a warning. Callers get partial data.
+ */
 async function loadRosterExtras(supabase, ids) {
   const empty = {
     lastNoteByClient: new Map(),
     openTodosByClient: new Map(),
     latestCheckinByClient: new Map(),
     churnByClient: new Map(),
+    warnings: [],
   };
   if (!ids.length) return empty;
 
-  const [notesRes, todosRes, checkinsRes, churnRes] = await Promise.all([
-    supabase
+  const [notesRes, todosRes, checkinsRes, churnRes] = await Promise.allSettled([
+    withTimeout(supabase
       .from('client_notes')
       .select('client_id, created_at')
       .in('client_id', ids)
-      .order('created_at', { ascending: false }),
-    supabase
+      .order('created_at', { ascending: false })),
+    withTimeout(supabase
       .from('coach_todos')
       .select('client_id, status')
       .in('client_id', ids)
-      .in('status', ['open', 'snoozed']),
+      .in('status', ['open', 'snoozed'])),
     // Pull recent weighed check-ins; we'll pick latest per client in JS to keep it one query.
-    supabase
+    withTimeout(supabase
       .from('weekly_checkins')
       .select('client_id, checkin_date, weight_lbs')
       .in('client_id', ids)
       .not('weight_lbs', 'is', null)
       .order('checkin_date', { ascending: false })
-      .limit(3000),
-    supabase
+      .limit(3000)),
+    withTimeout(supabase
       .from('client_churn_risk')
       .select('client_id, risk_tier, risk_score, primary_reasons, recommended_action, scored_at')
       .in('client_id', ids)
-      .order('scored_at', { ascending: false }),
+      .order('scored_at', { ascending: false })),
   ]);
-  if (notesRes.error) throw notesRes.error;
-  if (todosRes.error) throw todosRes.error;
-  if (checkinsRes.error) throw checkinsRes.error;
-  if (churnRes.error) throw churnRes.error;
+
+  const warnings = [];
+  const dataFrom = (settled, label) => {
+    if (settled.status !== 'fulfilled') { warnings.push(`${label}: ${settled.reason?.message || 'failed'}`); return []; }
+    if (settled.value.error) { warnings.push(`${label}: ${settled.value.error.message}`); return []; }
+    return settled.value.data || [];
+  };
+  const notes = dataFrom(notesRes, 'notes');
+  const todos = dataFrom(todosRes, 'todos');
+  const checkins = dataFrom(checkinsRes, 'checkins');
+  const churn = dataFrom(churnRes, 'churn');
 
   const lastNoteByClient = new Map();
-  for (const n of notesRes.data || []) {
+  for (const n of notes) {
     if (!lastNoteByClient.has(n.client_id)) lastNoteByClient.set(n.client_id, n.created_at);
   }
   const openTodosByClient = new Map();
-  for (const t of todosRes.data || []) {
+  for (const t of todos) {
     openTodosByClient.set(t.client_id, (openTodosByClient.get(t.client_id) || 0) + 1);
   }
   const latestCheckinByClient = new Map();
-  for (const c of checkinsRes.data || []) {
+  for (const c of checkins) {
     if (!latestCheckinByClient.has(c.client_id)) {
       latestCheckinByClient.set(c.client_id, { date: c.checkin_date, weight: c.weight_lbs });
     }
   }
   const churnByClient = new Map();
-  for (const r of churnRes.data || []) {
+  for (const r of churn) {
     if (!churnByClient.has(r.client_id)) churnByClient.set(r.client_id, r);
   }
-  return { lastNoteByClient, openTodosByClient, latestCheckinByClient, churnByClient };
+  return { lastNoteByClient, openTodosByClient, latestCheckinByClient, churnByClient, warnings };
 }
 
 export function registerClientsRoutes({ app, supabase }) {
   // ── Roster ──────────────────────────────────────────────────
   // Returns per-client goal-progress fields so the UI can lead with weight loss.
+  // Cached 30s — the roster changes at most once per check-in / reassign.
   app.get('/api/v2/clients', async (req, res) => {
-    try {
-      const tier = String(req.query.tier || 'all').toLowerCase();
-      const progressStatus = String(req.query.progress_status || 'all').toLowerCase();
-      const coach = String(req.query.coach || 'all');
-      const search = String(req.query.search || '').trim().toLowerCase();
-      const limit = Math.max(1, Math.min(500, Number(req.query.limit) || 200));
+    const tier = String(req.query.tier || 'all').toLowerCase();
+    const progressStatus = String(req.query.progress_status || 'all').toLowerCase();
+    const coach = String(req.query.coach || 'all');
+    const search = String(req.query.search || '').trim().toLowerCase();
+    const limit = Math.max(1, Math.min(500, Number(req.query.limit) || 200));
 
-      const { rows } = await loadRosterBase(supabase);
-      const ids = rows.map(r => r.id);
-      const {
-        lastNoteByClient,
-        openTodosByClient,
-        latestCheckinByClient,
-        churnByClient,
-      } = await loadRosterExtras(supabase, ids);
+    try {
+      // Cache the raw (pre-filter) roster so filter/search hits are instant.
+      const roster = await cachedFetch('clients:roster', 30_000, async () => {
+        const { rows, warnings: baseWarnings } = await loadRosterBase(supabase);
+        const ids = rows.map(r => r.id);
+        const extras = await loadRosterExtras(supabase, ids);
+        return { rows, ...extras, warnings: [...baseWarnings, ...(extras.warnings || [])] };
+      });
+      const { rows, lastNoteByClient, openTodosByClient, latestCheckinByClient, churnByClient, warnings } = roster;
 
       const today = new Date();
       let out = rows.map(r => {
@@ -352,10 +394,22 @@ export function registerClientsRoutes({ app, supabase }) {
         coaches,
         buckets,
         active_total: rows.length,
+        ...(warnings?.length ? { _warnings: warnings, _partial: true } : {}),
       });
     } catch (e) {
       console.error('[clients/roster]', e);
-      res.status(500).json({ error: e.message });
+      // Return 200 w/ empty partial payload — dashboard renders "some data missing"
+      // chip rather than a red "Failed to load" full-page banner.
+      res.status(200).json({
+        _error: e.message,
+        _partial: true,
+        total: 0,
+        rows: [],
+        filters: { tier, progress_status: progressStatus, coach, search, limit },
+        coaches: [],
+        buckets: { crushing: 0, on_track: 0, slipping: 0, struggling: 0, new_no_data: 0 },
+        active_total: 0,
+      });
     }
   });
 

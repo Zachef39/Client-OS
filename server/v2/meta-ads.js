@@ -1,6 +1,8 @@
 // Meta Ads sync — pulls per-day per-campaign insights and upserts into ad_metrics.
 // Reads META_ADS_TOKEN + META_AD_ACCOUNT_ID from env.
 
+import { fetchRetry } from './http.js';
+
 const META_API = 'https://graph.facebook.com/v21.0';
 
 function requireEnv(name) {
@@ -38,7 +40,7 @@ export async function fetchMetaDailyCampaigns(days = 30) {
   const all = [];
   let next = url.toString();
   while (next) {
-    const res = await fetch(next, { method: 'GET' });
+    const res = await fetchRetry(next, { method: 'GET' });
     if (!res.ok) {
       const text = await res.text().catch(() => '');
       throw new Error(`Meta insights ${res.status}: ${text.slice(0, 300)}`);

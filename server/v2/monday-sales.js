@@ -1,6 +1,8 @@
 // Monday Booked Calls board reader — mirrors biweekly-report/run.py logic.
 // Returns funnel + per-closer breakdown for any date window.
 
+import { fetchRetry } from './http.js';
+
 const MONDAY_API = 'https://api.monday.com/v2';
 
 // Column IDs — locked from biweekly-report/run.py (2026-07-04).
@@ -93,7 +95,7 @@ function requireEnv(name) {
 
 async function mondayQuery(query) {
   const token = requireEnv('MONDAY_API_TOKEN');
-  const res = await fetch(MONDAY_API, {
+  const res = await fetchRetry(MONDAY_API, {
     method: 'POST',
     headers: { 'Authorization': token, 'Content-Type': 'application/json' },
     body: JSON.stringify({ query }),

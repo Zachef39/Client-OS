@@ -2,6 +2,8 @@
 // Reads: coach_capacity view, clients, weekly_checkins, client_notes, coach_settings.
 // Writes: coach_settings.max_capacity, clients.assigned_coach.
 
+import { cachedFetch, invalidate } from './cache.js';
+
 const UNASSIGNED = '(unassigned)';
 
 // ─── helpers ───
@@ -68,10 +70,10 @@ function tierFromCountdown(daysUntil) {
 // ─── routes ───
 export function registerCapacityRoutes({ app, supabase }) {
 
-  // GET /api/v2/capacity/summary
+  // GET /api/v2/capacity/summary — cached 60s (coach load only shifts on reassign)
   app.get('/api/v2/capacity/summary', async (_req, res) => {
     try {
-      const coaches = await listActiveCoaches(supabase);
+      const coaches = await cachedFetch('capacity:summary', 60_000, () => listActiveCoaches(supabase));
 
       const active = coaches.filter(c => c.coach_name !== UNASSIGNED && c.active_clients > 0);
       const at80 = active.filter(c => c.pct_full >= 80 && c.pct_full < 100).length;
@@ -208,6 +210,7 @@ export function registerCapacityRoutes({ app, supabase }) {
         .from('coach_settings')
         .upsert({ coach_name: coach, max_capacity: max, updated_at: new Date().toISOString() }, { onConflict: 'coach_name' });
       if (error) throw error;
+      invalidate('capacity:');
       res.json({ ok: true, coach, max_capacity: max });
     } catch (e) {
       console.error('[capacity/:coach/max]', e);
@@ -248,7 +251,8 @@ export function registerCapacityRoutes({ app, supabase }) {
         .update({ assigned_coach: newCoach, updated_at: new Date().toISOString() })
         .eq('id', client_id);
       if (updErr) throw updErr;
-
+      invalidate('capacity:');
+      invalidate('clients:');
       res.json({ ok: true, client_id, full_name: current.full_name, from: current.assigned_coach, to: newCoach });
     } catch (e) {
       console.error('[capacity/reassign]', e);

@@ -40,6 +40,7 @@ import { registerPnlRoutes } from './pnl-api.js';
 import { registerClientsRoutes } from './clients-api.js';
 import { registerOverviewRoutes } from './overview-api.js';
 import { registerCompanyKpiRoutes } from './company-kpi.js';
+import { cachedFetch, invalidate } from './cache.js';
 
 // ─── Utility ───
 function windowFromDays(days) {
@@ -52,17 +53,10 @@ function windowFromDays(days) {
   };
 }
 
-// Simple in-process cache: `sales.summary` and `sales.by_closer` hit Monday which is slow.
-// Cache 60s per window.
-const cache = new Map();
-async function cached(key, ttlMs, fn) {
-  const now = Date.now();
-  const hit = cache.get(key);
-  if (hit && hit.expires > now) return hit.value;
-  const value = await fn();
-  cache.set(key, { value, expires: now + ttlMs });
-  return value;
-}
+// Shared in-process cache (see cache.js). `sales.summary` and `sales.by_closer`
+// hit Monday which is slow — the routes below cache 60s per window.
+// After ads sync we invalidate everything cached (Monday snapshot + summaries).
+const cached = cachedFetch;
 
 export function registerV2Routes({ app, supabase }) {
   // ── Ads ────────────────────────────────────────────
@@ -182,8 +176,9 @@ export function registerV2Routes({ app, supabase }) {
     const days = Math.max(1, Math.min(90, Number(req.body?.days) || 3));
     try {
       const result = await syncMetaAds(supabase, days);
-      // Invalidate cached summaries — cheap enough to just wipe cache
-      cache.clear();
+      // Invalidate cached summaries — new ad rows may shift ROAS + capacity views.
+      invalidate('monday:');
+      invalidate('bc:');
       res.json({ ok: true, ...result, days });
     } catch (e) {
       console.error('[ads/sync] error:', e);
@@ -208,7 +203,16 @@ export function registerV2Routes({ app, supabase }) {
       });
     } catch (e) {
       console.error('[sales/summary]', e);
-      res.status(500).json({ error: e.message });
+      res.status(200).json({
+        _error: e.message,
+        _partial: true,
+        window: { start, end },
+        booked: 0, booked_15: 0, booked_45: 0,
+        shown: 0, shown_15: 0, shown_45: 0,
+        closed: 0, cash_collected: 0, cash_contracted: 0, acv: 0,
+        lost_reasons: [], recent_sales: [],
+        spark_booked: [], spark_shown: [], spark_closed: [], spark_cash: [],
+      });
     }
   });
 
@@ -221,7 +225,7 @@ export function registerV2Routes({ app, supabase }) {
       res.json({ window: { start, end, days }, closers });
     } catch (e) {
       console.error('[sales/by-closer]', e);
-      res.status(500).json({ error: e.message });
+      res.status(200).json({ _error: e.message, _partial: true, window: { start, end, days }, closers: [] });
     }
   });
 
@@ -245,7 +249,17 @@ export function registerV2Routes({ app, supabase }) {
       });
     } catch (e) {
       console.error('[booked-calls/summary]', e);
-      res.status(500).json({ error: e.message });
+      // Graceful partial — dashboard renders "partial data" chip instead of failing whole tab.
+      res.status(200).json({
+        _error: e.message,
+        _partial: true,
+        window: windowFromDays(days),
+        totals: { booked: 0, shown: 0, closed: 0, cash_collected: 0, cash_contracted: 0, close_rate: null, show_rate: null, by_source: {} },
+        by_source_group: [],
+        spark_booked: [], spark_shown: [], spark_closed: [],
+        dedup_stats: {},
+        item_count: 0,
+      });
     }
   });
 
@@ -257,7 +271,7 @@ export function registerV2Routes({ app, supabase }) {
       res.json({ window: unified.window, reasons });
     } catch (e) {
       console.error('[booked-calls/lost-reasons]', e);
-      res.status(500).json({ error: e.message });
+      res.status(200).json({ _error: e.message, _partial: true, window: windowFromDays(days), reasons: [] });
     }
   });
 
@@ -269,7 +283,7 @@ export function registerV2Routes({ app, supabase }) {
       res.json({ window: unified.window, closers });
     } catch (e) {
       console.error('[booked-calls/by-closer]', e);
-      res.status(500).json({ error: e.message });
+      res.status(200).json({ _error: e.message, _partial: true, window: windowFromDays(days), closers: [] });
     }
   });
 
@@ -281,7 +295,7 @@ export function registerV2Routes({ app, supabase }) {
       res.json({ window: unified.window, setters });
     } catch (e) {
       console.error('[booked-calls/by-setter]', e);
-      res.status(500).json({ error: e.message });
+      res.status(200).json({ _error: e.message, _partial: true, window: windowFromDays(days), setters: [] });
     }
   });
 
@@ -293,7 +307,7 @@ export function registerV2Routes({ app, supabase }) {
       res.json({ window: unified.window, sources });
     } catch (e) {
       console.error('[booked-calls/by-source]', e);
-      res.status(500).json({ error: e.message });
+      res.status(200).json({ _error: e.message, _partial: true, window: windowFromDays(days), sources: [] });
     }
   });
 
@@ -317,7 +331,15 @@ export function registerV2Routes({ app, supabase }) {
       });
     } catch (e) {
       console.error('[booked-calls/from-ads]', e);
-      res.status(500).json({ error: e.message });
+      res.status(200).json({
+        _error: e.message,
+        _partial: true,
+        window: windowFromDays(days),
+        totals: { booked: 0, shown: 0, closed: 0, cash_collected: 0, cash_contracted: 0, close_rate: null, show_rate: null, by_source: {} },
+        daily: { dates: [], booked: [], collected: [], contracted: [] },
+        attribution_note: 'partial data',
+        item_count: 0,
+      });
     }
   });
 
@@ -411,7 +433,16 @@ export function registerV2Routes({ app, supabase }) {
       });
     } catch (e) {
       console.error('[overview]', e);
-      res.status(500).json({ error: e.message });
+      res.status(200).json({
+        _error: e.message,
+        _partial: true,
+        window: { start, end, days },
+        mtd: { cash_collected: 0, cash_contracted: 0 },
+        ads: { spend: 0, cash_from_ads: 0, roas: null, spark_spend: [], spark_cash: [] },
+        clients: { active: 0, new_this_month: 0 },
+        resigns: { critical: 0, urgent: 0, watch: 0, upcoming: [] },
+        coaches: [],
+      });
     }
   });
 
@@ -589,7 +620,13 @@ export function registerV2Routes({ app, supabase }) {
       });
     } catch (e) {
       console.error('[team/setters]', e);
-      res.status(500).json({ error: e.message });
+      res.status(200).json({
+        _error: e.message,
+        _partial: true,
+        window: windowFromDays(days),
+        totals: { dms_sent: 0, calls_booked: 0, closes: 0, ad_spend: 0 },
+        setters: [],
+      });
     }
   });
 
@@ -658,7 +695,13 @@ export function registerV2Routes({ app, supabase }) {
       });
     } catch (e) {
       console.error('[team/closers]', e);
-      res.status(500).json({ error: e.message });
+      res.status(200).json({
+        _error: e.message,
+        _partial: true,
+        window: windowFromDays(days),
+        totals: { calls_taken: 0, shown: 0, closed: 0, cash_collected: 0, cash_contracted: 0, close_rate: null },
+        closers: [],
+      });
     }
   });
 

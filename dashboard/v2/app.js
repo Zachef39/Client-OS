@@ -43,6 +43,8 @@ const TAB_META = {
 };
 
 // ─── API helpers ───
+// Endpoints degrade to 200 w/ `_error` + `_partial` fields instead of 500.
+// We still throw on hard non-OK responses (network, 401, 502 gateway errors).
 export async function api(path, opts = {}) {
   const res = await fetch(path, {
     headers: { 'Content-Type': 'application/json' },
@@ -53,7 +55,21 @@ export async function api(path, opts = {}) {
     const text = await res.text().catch(() => '');
     throw new Error(`${res.status} ${res.statusText}: ${text.slice(0, 200)}`);
   }
-  return res.json();
+  const data = await res.json();
+  if (data && data._partial) {
+    console.warn(`[api:partial] ${path}`, data._error || data._warnings);
+  }
+  return data;
+}
+
+/**
+ * Render a small "partial data" chip. Pass any endpoint response — if it has
+ * `_partial` or `_error`, returns a chip HTML string. Otherwise returns ''.
+ */
+export function PartialChip(data) {
+  if (!data || (!data._partial && !data._error)) return '';
+  const msg = data._error || (data._warnings || []).join('; ') || 'Some data missing';
+  return `<span class="pill yellow" title="${escapeHtml(msg)}" style="margin-left:8px;font-size:11px;">⚠ partial data</span>`;
 }
 
 export function getRangeDays() {

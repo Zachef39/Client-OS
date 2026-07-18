@@ -11,6 +11,7 @@
 //            Nothing else counts as closed.
 
 import { fetchBookedCallsItems, resolveUsers, __getCachedUserName } from './monday-sales.js';
+import { fetchRetry } from './http.js';
 
 const GHL_API = 'https://services.leadconnectorhq.com';
 const GHL_VERSION_CALENDARS = '2021-04-15';
@@ -97,7 +98,7 @@ function toIsoDate(v) {
 // ── GHL client ───────────────────────────────────────────
 async function ghlFetch(path, version = GHL_VERSION_CALENDARS) {
   const token = requireEnv('GHL_API_KEY');
-  const res = await fetch(`${GHL_API}${path}`, {
+  const res = await fetchRetry(`${GHL_API}${path}`, {
     headers: { Authorization: `Bearer ${token}`, Version: version },
   });
   if (!res.ok) throw new Error(`GHL ${res.status} on ${path}: ${await res.text()}`);
