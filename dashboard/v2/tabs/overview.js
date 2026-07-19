@@ -124,69 +124,95 @@ function renderKpiRow(kpis, bcSum) {
   `;
 }
 
-// ─── Row 2: Sales snapshot (Booked / Shown / Closed / Close Rate) ─────
-function renderSnapshotRow(bcSum, kpis) {
+// ─── Row 2: Sales snapshot (Completed / Pitched / Closed / DQ + rates) ─────
+// Per Zach 2026-07-18 v2:
+//   - Show only completed calls in main funnel; upcoming shown separately
+//   - Rates: show = pitched/completed · close = closed/pitched · DQ = dq/completed
+function renderSnapshotRow(bcSum) {
   if (!bcSum?.totals) return renderInlineError('Sales snapshot failed to load.');
   const t = bcSum.totals;
 
-  // Close-rate pill color
-  const cr = t.close_rate || 0;
-  const crCls = cr >= 0.20 ? 'green' : cr >= 0.10 ? 'yellow' : 'red';
-  const crLabel = fmt.pct(cr, 1);
-
-  // Booked WoW — reuse the cash_delta_wow chip for now (Booked is same 30d window;
-  //   real WoW would need a separate endpoint). Keep neutral to avoid misleading Zach.
-  const bookedCard = `
+  // Completed = past-date calls w/ real outcome
+  const completedCard = `
     <article class="kpi">
-      <div class="kpi-label">Booked · 30d</div>
-      <div class="kpi-value">${fmt.int(t.booked)}</div>
-      <div class="kpi-sub"><span>Monday + GHL, deduped</span></div>
+      <div class="kpi-label">Completed</div>
+      <div class="kpi-value">${fmt.int(t.completed ?? 0)}</div>
+      <div class="kpi-sub"><span>${fmt.int(t.upcoming ?? 0)} upcoming · ${fmt.int(t.booked ?? 0)} booked total</span></div>
       ${Sparkline(bcSum.spark_booked || [])}
     </article>
   `;
 
-  const shownPct = t.booked > 0 ? t.shown / t.booked : 0;
-  const shownPill = shownPct >= 0.75 ? 'green' : shownPct >= 0.6 ? 'yellow' : 'red';
-  const shownCard = `
+  // Pitched (offer given) — Sold + Unsuccessful + Bloodwork Only
+  const showRate = t.show_rate || 0;
+  const showPill = showRate >= 0.5 ? 'green' : showRate >= 0.3 ? 'yellow' : 'red';
+  const pitchedCard = `
     <article class="kpi">
-      <div class="kpi-label">Shown · 30d</div>
-      <div class="kpi-value">${fmt.int(t.shown)}</div>
-      <div class="kpi-sub"><span class="pill ${shownPill}">${fmt.pct(shownPct, 0)} of booked</span></div>
+      <div class="kpi-label">Pitched</div>
+      <div class="kpi-value">${fmt.int(t.pitched ?? 0)}</div>
+      <div class="kpi-sub"><span class="pill ${showPill}">${fmt.pct(showRate, 0)} show rate</span></div>
       ${Sparkline(bcSum.spark_shown || [])}
     </article>
   `;
 
-  const closedPct = t.shown > 0 ? t.closed / t.shown : 0;
-  const closedPill = closedPct >= 0.20 ? 'green' : closedPct >= 0.10 ? 'yellow' : 'red';
+  // Closed
+  const closeRate = t.close_rate || 0;
+  const closePill = closeRate >= 0.30 ? 'green' : closeRate >= 0.15 ? 'yellow' : 'red';
   const closedCard = `
     <article class="kpi">
-      <div class="kpi-label">Closed · 30d</div>
-      <div class="kpi-value">${fmt.int(t.closed)}</div>
-      <div class="kpi-sub"><span class="pill ${closedPill}">${fmt.pct(closedPct, 0)} of shown</span></div>
+      <div class="kpi-label">Closed</div>
+      <div class="kpi-value">${fmt.int(t.closed ?? 0)}</div>
+      <div class="kpi-sub"><span class="pill ${closePill}">${fmt.pct(closeRate, 0)} close rate</span></div>
       ${Sparkline(bcSum.spark_closed || [])}
     </article>
   `;
 
-  const closeRateCard = `
+  // DQ
+  const dqRate = t.dq_rate || 0;
+  const dqPill = dqRate <= 0.30 ? 'green' : dqRate <= 0.5 ? 'yellow' : 'red';
+  const dqCard = `
     <article class="kpi">
-      <div class="kpi-label">Close Rate · 30d</div>
-      <div class="kpi-value">${crLabel}</div>
-      <div class="kpi-sub"><span class="pill ${crCls}">${cr >= 0.20 ? 'healthy' : cr >= 0.10 ? 'watch' : 'below target'}</span></div>
+      <div class="kpi-label">DQ</div>
+      <div class="kpi-value">${fmt.int(t.dq ?? 0)}</div>
+      <div class="kpi-sub"><span class="pill ${dqPill}">${fmt.pct(dqRate, 0)} of completed</span></div>
       <div class="spark"></div>
     </article>
   `;
 
+  // Small secondary row: No Show / Canceled / Nurture / Upcoming
+  const nsCount = t.no_show ?? 0, cnCount = t.canceled ?? 0, nuCount = t.nurture ?? 0, upCount = t.upcoming ?? 0;
+  const secondaryRow = `
+    <div class="kpi-grid" style="margin-top: var(--s-3); grid-template-columns: repeat(4, 1fr); gap: var(--s-2);">
+      <div class="kpi" style="padding: 12px 16px;">
+        <div class="kpi-label" style="font-size: 11px;">No Show</div>
+        <div class="kpi-value" style="font-size: 20px;">${fmt.int(nsCount)}</div>
+      </div>
+      <div class="kpi" style="padding: 12px 16px;">
+        <div class="kpi-label" style="font-size: 11px;">Canceled</div>
+        <div class="kpi-value" style="font-size: 20px;">${fmt.int(cnCount)}</div>
+      </div>
+      <div class="kpi" style="padding: 12px 16px;">
+        <div class="kpi-label" style="font-size: 11px;">Nurture</div>
+        <div class="kpi-value" style="font-size: 20px;">${fmt.int(nuCount)}</div>
+      </div>
+      <div class="kpi" style="padding: 12px 16px;">
+        <div class="kpi-label" style="font-size: 11px;">Upcoming</div>
+        <div class="kpi-value" style="font-size: 20px; color: var(--mauve);">${fmt.int(upCount)}</div>
+      </div>
+    </div>
+  `;
+
   return `
     <div class="section-header" style="margin-top: var(--s-5);">
-      <h2>Sales Snapshot</h2>
-      <span class="hint">${bcSum.window.start} → ${bcSum.window.end}</span>
+      <h2>Sales Funnel</h2>
+      <span class="hint">${bcSum.window.start} → ${bcSum.window.end} · upcoming excluded from rates</span>
     </div>
     <div class="kpi-grid">
-      ${bookedCard}
-      ${shownCard}
+      ${completedCard}
+      ${pitchedCard}
       ${closedCard}
-      ${closeRateCard}
+      ${dqCard}
     </div>
+    ${secondaryRow}
   `;
 }
 
@@ -200,9 +226,10 @@ function renderCloserTable(bcCloser) {
         <thead>
           <tr>
             <th>Closer</th>
-            <th class="num">Booked</th>
-            <th class="num">Shown</th>
+            <th class="num">Completed</th>
+            <th class="num">Pitched</th>
             <th class="num">Closed</th>
+            <th class="num">DQ</th>
             <th class="num">Close Rate</th>
             <th class="num">Cash Collected</th>
             <th class="num">Cash Contracted</th>
@@ -211,14 +238,15 @@ function renderCloserTable(bcCloser) {
         <tbody>
           ${rows.map(r => {
             const cr = r.close_rate;
-            const crCls = cr == null ? 'grey' : cr >= 0.20 ? 'green' : cr >= 0.10 ? 'yellow' : 'red';
+            const crCls = cr == null ? 'grey' : cr >= 0.30 ? 'green' : cr >= 0.15 ? 'yellow' : 'red';
             const crLabel = cr == null ? '—' : fmt.pct(cr, 0);
             return `
               <tr>
                 <td>${escapeHtml(r.closer)}</td>
-                <td class="num">${fmt.int(r.booked)}</td>
-                <td class="num">${fmt.int(r.shown)}</td>
+                <td class="num">${fmt.int(r.completed ?? 0)}</td>
+                <td class="num">${fmt.int(r.pitched ?? r.shown ?? 0)}</td>
                 <td class="num">${fmt.int(r.closed)}</td>
+                <td class="num">${fmt.int(r.dq ?? 0)}</td>
                 <td class="num">${StatusPill(crCls, crLabel)}</td>
                 <td class="num">${fmt.money(r.cash_collected, { short: true })}</td>
                 <td class="num">${fmt.money(r.cash_contracted, { short: true })}</td>
