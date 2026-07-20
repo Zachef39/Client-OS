@@ -1,532 +1,671 @@
-// Unified Booked Calls fetcher — Monday + GoHighLevel.
-// Merges the two sources, dedupes on (name + phone/email + date window),
-// and classifies each row as booked/shown/closed per Zach's rules.
+// Booked Calls — SINGLE source of truth for the Client OS sales dashboard.
+// Locked to Monday board 18372257888 ("Booked Calls") post-2026-07-20 cleanup.
+// Spec: ~/.claude/projects/-Users-zachef/memory/reference_booked_calls_dashboard_spec.md
 //
-// Zach's rules:
-//   Booked = every row from Monday Booked Calls board + GHL sales calendar events
-//            (deduped when the same lead appears in both within 24h).
-//   Shown  = outcome NOT IN ('No Show', 'Needs Rebooking', empty/blank).
-//            DQ / Unsuccessful still count as shown.
-//   Closed = outcome IN ('Sold', 'Bloodwork Only', 'Bloodwork Sold').
-//            Nothing else counts as closed.
+// Every KPI on the Overview / Sales / Ads tabs comes through getBookedCallsKPIs().
+// Do not add math anywhere else — call this function.
 
-import { fetchBookedCallsItems, resolveUsers, __getCachedUserName } from './monday-sales.js';
 import { fetchRetry } from './http.js';
+import { __getCachedUserName } from './monday-sales.js';
 
-const GHL_API = 'https://services.leadconnectorhq.com';
-const GHL_VERSION_CALENDARS = '2021-04-15';
-const GHL_VERSION_CONTACTS = '2021-07-28';
+// ── Monday constants ────────────────────────────────────
+const MONDAY_API = 'https://api.monday.com/v2';
+const BOARD_ID = process.env.MONDAY_BOARD_ID || '18372257888';
 
-// ── Rules ─────────────────────────────────────────────────
-// Per Zach 2026-07-18 v2:
-// - COMPLETED = past-date call w/ outcome set (Sales Call Booked = not completed, blank = not completed)
-// - PITCHED (aka "shown") = COMPLETED w/ outcome IN (Sold, Unsuccessful, Bloodwork Only) — offer given
-// - CLOSED = COMPLETED w/ outcome IN (Sold, Bloodwork Only) — actual sale
-// - Future-dated calls = UPCOMING, never counted in rate denominators
-const PITCHED_OUTCOMES = new Set(['Sold', 'Unsuccessful', 'Bloodwork Only']);
-const CLOSED_OUTCOMES = new Set(['Sold', 'Bloodwork Only', 'Bloodwork Sold']);
-const DQ_OUTCOMES = new Set(['DQ']);
-const NO_SHOW_OUTCOMES = new Set(['No Show']);
-const CANCELED_OUTCOMES = new Set(['Canceled']);
-const NURTURE_OUTCOMES = new Set(['Nurture']);
-const REBOOKED_OUTCOMES = new Set(['Needs Rebooking', 'Rebooked']);
-// Outcomes that indicate the call hasn't happened yet:
-const NOT_YET_OUTCOMES = new Set(['', 'Sales Call Booked', '45 Qualified']);
+// Column IDs — exact literals from the post-cleanup board.
+const COL = {
+  date: 'date4',                          // Call Date (only date col that matters now)
+  outcome: 'status',                      // Outcome (Sold / Unsuccessful / DQ / …)
+  closer: 'person',                       // Closer (Zach, Dina)
+  setter: 'multiple_person_mkvsxzf9',     // Setter/DMer (Spencer, Sheila — often both)
+  contracted: 'numeric_mkpq8d77',         // $ Contracted
+  collected: 'numeric_mkpq7kcy',          // $ Initial Collected
+  keyword: 'dropdown_mkpq2nxj',           // Lead-source keyword (paid vs organic)
+  lostReason: 'dropdown_mm2qma67',        // Lost Reason (only Unsuccessful/NoShow rows)
+  program: 'dropdown_mkpq36f8',           // Program signed for
+};
+const COL_IDS = Object.values(COL);
 
-// Monday column IDs (verified against board 18372257888 on 2026-07-17).
-const MONDAY_COL = {
-  date_15: 'date4',
-  date_45: 'date_mkxxtzhe',
-  outcome: 'status',
-  closer: 'person',                       // "45 Call" people col (single)
-  setter: 'multiple_person_mkvsxzf9',     // "DMer" people col
-  contracted: 'numeric_mkpq8d77',
-  collected: 'numeric_mkpq7kcy',
-  phone: 'phone_mkrv3wst',
-  keyword: 'dropdown_mkpq2nxj',           // rough lead-source proxy
-  lost_reason: 'dropdown_mm2qma67',
-  program: 'dropdown_mkpq36f8',
+const PERSON_COL_IDS = new Set([COL.closer, COL.setter]);
+
+// ── Outcome vocabulary (label strings, not indexes — safer if labels reorder) ─
+const OUTCOME = {
+  SOLD: 'Sold',
+  UNSUCCESSFUL: 'Unsuccessful',
+  BLOODWORK_ONLY: 'Bloodwork Only',
+  NO_SHOW: 'No Show',
+  NEEDS_REBOOKING: 'Needs Rebooking',
+  DQ: 'DQ',
+  CANCELED: 'Canceled',
+  NURTURE: 'Nurture',
+  REBOOKED: 'Rebooked',
 };
 
-// ── Env / helpers ────────────────────────────────────────
+// Per spec KPI definitions:
+const SHOWN_OUTCOMES = new Set([OUTCOME.SOLD, OUTCOME.UNSUCCESSFUL, OUTCOME.BLOODWORK_ONLY]);
+const CLOSED_OUTCOMES = new Set([OUTCOME.SOLD, OUTCOME.BLOODWORK_ONLY]);
+// No-show = ghost only. "Needs Rebooking" excluded — polite reschedules don't hurt show rate (industry standard).
+const NO_SHOW_OUTCOMES = new Set([OUTCOME.NO_SHOW]);
+const RESCHEDULED_OUTCOMES = new Set([OUTCOME.NEEDS_REBOOKING]);
+const DQ_CANCELED_OUTCOMES = new Set([OUTCOME.DQ, OUTCOME.CANCELED]);
+
+// Organic keyword list (case-insensitive exact match). Everything else = paid.
+const ORGANIC_KEYWORDS = new Set(
+  ['New Follower', 'Referral', 'Outreach', 'Friend', 'Reactivation SMS', 'Resign']
+    .map(k => k.toLowerCase())
+);
+
+// Setter name whitelist — only credit named setters, ignore anyone else that
+// sneaks into the multi-person column. Match on first name (case-insensitive).
+const NAMED_SETTERS = new Set(['spencer', 'sheila']);
+
+// Group ID → nice title fallback (in case Monday response omits titles).
+const GROUP_TITLES = {
+  'topics': 'Call Scheduled',
+  'group_mkpqnxbg': 'Upcoming Calls',
+  'group_mkxxgbeb': 'Qualified Calls',
+  'group_mkpqdcta': "Today's Calls",
+  'group_mkpqj4rk': 'Completed Calls',
+  'group_mkpy5wh7': 'GET REBOOKED',
+  'group_mkpqvsex': 'Calls Not Taken',
+  'group_mkvf7eqk': 'DQ',
+  'group_mkr8kbg5': 'CLOSE TO CLOSING!',
+  'group_mkxx36ay': 'Future Follow Ups',
+};
+
+// ── Helpers ─────────────────────────────────────────────
 function requireEnv(name) {
   const v = process.env[name];
   if (!v) throw new Error(`Missing env var: ${name}`);
   return v;
 }
 
-const PERSON_COL_IDS = new Set(['person', 'multiple_person_mkvsxzf9']);
+async function mondayQuery(query) {
+  const token = requireEnv('MONDAY_API_TOKEN');
+  const res = await fetchRetry(MONDAY_API, {
+    method: 'POST',
+    headers: { Authorization: token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query }),
+  });
+  if (!res.ok) throw new Error(`Monday ${res.status}: ${await res.text()}`);
+  const json = await res.json();
+  if (json.errors) throw new Error(`Monday errors: ${JSON.stringify(json.errors)}`);
+  return json;
+}
 
 function pickCol(item, colId) {
-  for (const c of item.column_values || []) {
-    if (c.id !== colId) continue;
-    if (isPersonCol(c)) return resolvePersonNamesFromCol(c).join(', ');
-    return c.text || '';
+  for (const c of (item.column_values || [])) {
+    if (c.id === colId) return c;
   }
-  return '';
+  return null;
 }
 
-function isPersonCol(col) {
-  if (!col) return false;
-  if (PERSON_COL_IDS.has(col.id)) return true;
-  const t = (col.type || '').toLowerCase();
-  return t === 'person' || t === 'people' || t.includes('person');
+function colText(item, colId) {
+  return pickCol(item, colId)?.text || '';
 }
 
-// Access the resolved user names via the same cache the monday-sales module populates.
-// fetchBookedCallsItems() hydrates the cache before returning, so this is sync.
-function resolvePersonNamesFromCol(col) {
-  const raw = col.value;
-  if (!raw) return [];
-  let parsed;
+function colNumber(item, colId) {
+  const n = Number(colText(item, colId));
+  return Number.isFinite(n) ? n : 0;
+}
+
+function parsePersonIds(colValue) {
+  if (!colValue) return [];
   try {
-    parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    const parsed = typeof colValue === 'string' ? JSON.parse(colValue) : colValue;
+    const arr = parsed?.personsAndTeams || [];
+    return arr.filter(p => p && (p.kind === 'person' || !p.kind)).map(p => String(p.id));
   } catch {
-    return col.text ? [col.text] : [];
+    return [];
   }
-  const arr = parsed?.personsAndTeams || [];
-  const ids = arr.filter(p => p && (p.kind === 'person' || !p.kind)).map(p => String(p.id));
-  const names = ids.map(id => __getCachedUserName(id)).filter(Boolean);
-  return names.length > 0 ? names : (col.text ? [col.text] : []);
 }
 
-function normalizePhone(raw) {
-  if (!raw) return '';
-  return String(raw).replace(/\D/g, '').slice(-10); // last 10 digits
+function personNames(item, colId) {
+  const c = pickCol(item, colId);
+  if (!c) return [];
+  const ids = parsePersonIds(c.value);
+  const resolved = ids.map(id => __getCachedUserName(id)).filter(Boolean);
+  if (resolved.length > 0) return resolved;
+  // Fallback: Monday's `text` field is a comma-joined list of names.
+  return c.text ? c.text.split(',').map(s => s.trim()).filter(Boolean) : [];
 }
 
-function normalizeName(raw) {
-  if (!raw) return '';
-  return String(raw).toLowerCase().replace(/\s+/g, ' ').trim();
+function firstName(fullName) {
+  return (fullName || '').trim().split(/\s+/)[0] || '';
 }
 
-function toIsoDate(v) {
-  if (!v) return null;
-  const d = typeof v === 'string' ? new Date(v) : v;
-  if (Number.isNaN(d.getTime())) return null;
-  return d.toISOString().slice(0, 10);
+// ── Person-name cache seeding ───────────────────────────
+// booked-calls owns its own cache seed so it can run standalone (verification
+// script, cron, etc) without depending on monday-sales.js internals.
+const _userCache = new Map();
+function cacheGet(id) {
+  return _userCache.get(String(id)) || __getCachedUserName(id);
 }
-
-// ── GHL client ───────────────────────────────────────────
-async function ghlFetch(path, version = GHL_VERSION_CALENDARS) {
-  const token = requireEnv('GHL_API_KEY');
-  const res = await fetchRetry(`${GHL_API}${path}`, {
-    headers: { Authorization: `Bearer ${token}`, Version: version },
-  });
-  if (!res.ok) throw new Error(`GHL ${res.status} on ${path}: ${await res.text()}`);
-  return res.json();
-}
-
-async function fetchGhlEventsForCalendar(calendarId, startMs, endMs) {
-  const locationId = requireEnv('GHL_LOCATION_ID');
-  const path = `/calendars/events?locationId=${locationId}&calendarId=${calendarId}&startTime=${startMs}&endTime=${endMs}`;
-  const data = await ghlFetch(path, GHL_VERSION_CALENDARS);
-  return data.events || [];
-}
-
-// Contact cache — avoid hammering /contacts/:id for the same contact twice.
-const contactCache = new Map();
-async function fetchGhlContact(contactId) {
-  if (!contactId) return null;
-  if (contactCache.has(contactId)) return contactCache.get(contactId);
+async function resolveUserIds(ids) {
+  const unknown = [...new Set(ids)].filter(id => id && !cacheGet(id));
+  if (unknown.length === 0) return;
+  const idList = unknown.map(id => Number(id)).filter(n => Number.isFinite(n)).join(',');
+  if (!idList) return;
   try {
-    const data = await ghlFetch(`/contacts/${contactId}`, GHL_VERSION_CONTACTS);
-    const c = data?.contact || null;
-    contactCache.set(contactId, c);
-    return c;
+    const data = await mondayQuery(`{ users(ids: [${idList}]) { id name } }`);
+    for (const u of data.data?.users || []) {
+      _userCache.set(String(u.id), u.name || `user:${u.id}`);
+    }
   } catch (e) {
-    // If a single contact 404s / perms-fail, don't tank the whole run.
-    contactCache.set(contactId, null);
-    return null;
+    // Non-fatal — fall back to raw text field downstream.
+    console.warn('[booked-calls] user resolve failed:', e.message);
   }
+  for (const id of unknown) if (!cacheGet(id)) _userCache.set(String(id), `user:${id}`);
 }
 
-// ── Data shape ───────────────────────────────────────────
-// Every unified item exposes this shape:
-// {
-//   source: 'monday' | 'ghl' | 'both',
-//   name, phone, email,
-//   booked_date,          // ISO date the call was booked FOR
-//   outcome,              // Monday status text; '' if GHL-only
-//   closer_assigned,      // Monday `person` text
-//   setter_assigned,      // Monday `multiple_person_mkvsxzf9` text
-//   cash_collected,       // Monday
-//   cash_contracted,      // Monday
-//   lead_source,          // Monday keyword OR GHL calendar name
-//   monday_item_id,       // string | null
-//   ghl_appointment_id,   // string | null
-// }
+// Patch personNames() lookup to also check our own cache.
+function resolvedName(id) {
+  return _userCache.get(String(id)) || __getCachedUserName(id) || null;
+}
 
-function mondayItemToUnified(item) {
-  const date45 = pickCol(item, MONDAY_COL.date_45);
-  const date15 = pickCol(item, MONDAY_COL.date_15);
-  const booked_date = date45 || date15 || null;
-  const outcome = pickCol(item, MONDAY_COL.outcome) || '';
-  const phone = normalizePhone(pickCol(item, MONDAY_COL.phone));
+function personNamesWithFallback(item, colId) {
+  const c = pickCol(item, colId);
+  if (!c) return [];
+  const ids = parsePersonIds(c.value);
+  const resolved = ids.map(id => resolvedName(id)).filter(Boolean);
+  if (resolved.length > 0) return resolved;
+  return c.text ? c.text.split(',').map(s => s.trim()).filter(Boolean) : [];
+}
+
+// ── Fetcher ─────────────────────────────────────────────
+/**
+ * Fetch every item on the Booked Calls board (paginated).
+ * Hydrates person-column user names before returning.
+ */
+async function fetchAllItems() {
+  const colList = COL_IDS.map(c => `"${c}"`).join(',');
+  const items = [];
+  let cursor = null;
+  for (let i = 0; i < 30; i += 1) {
+    const cursorArg = cursor ? `, cursor: "${cursor}"` : '';
+    const q = `
+      {
+        boards(ids: [${BOARD_ID}]) {
+          items_page(limit: 200${cursorArg}) {
+            cursor
+            items {
+              id name
+              group { id title }
+              column_values(ids: [${colList}]) { id text value type }
+            }
+          }
+        }
+      }
+    `;
+    const data = await mondayQuery(q);
+    const page = data.data?.boards?.[0]?.items_page;
+    if (!page) break;
+    items.push(...(page.items || []));
+    cursor = page.cursor;
+    if (!cursor) break;
+  }
+
+  // Resolve every person-column user ID → name.
+  const ids = new Set();
+  for (const it of items) {
+    for (const c of it.column_values || []) {
+      if (!PERSON_COL_IDS.has(c.id)) continue;
+      for (const uid of parsePersonIds(c.value)) ids.add(uid);
+    }
+  }
+  if (ids.size > 0) await resolveUserIds([...ids]);
+  return items;
+}
+
+// ── Item projection ─────────────────────────────────────
+function projectItem(item) {
+  const outcome = colText(item, COL.outcome).trim();
+  const callDate = colText(item, COL.date) || null;
+  const contracted = colNumber(item, COL.contracted);
+  const collected = colNumber(item, COL.collected);
+  const closerList = personNamesWithFallback(item, COL.closer);
+  const setterList = personNamesWithFallback(item, COL.setter);
+  const keyword = colText(item, COL.keyword).trim();
+  const lostReason = colText(item, COL.lostReason).trim();
+  const program = colText(item, COL.program).trim();
+  const groupId = item.group?.id || '';
+  const groupTitle = item.group?.title || GROUP_TITLES[groupId] || '';
+
+  const isShown = SHOWN_OUTCOMES.has(outcome);
+  const isClosedByOutcome = CLOSED_OUTCOMES.has(outcome);
+  const isClosedByCash = contracted > 0 || collected > 0;
+  const isClosed = isClosedByOutcome || isClosedByCash;
+  const isNoShow = NO_SHOW_OUTCOMES.has(outcome);
+  const isRescheduled = RESCHEDULED_OUTCOMES.has(outcome);
+  const isDqCanceled = DQ_CANCELED_OUTCOMES.has(outcome);
+
+  // Ads-source classification — organic keyword list (case-insensitive exact match).
+  // Missing keyword = paid (per spec).
+  const isOrganic = keyword && ORGANIC_KEYWORDS.has(keyword.toLowerCase());
+  const isPaid = !isOrganic;
+
   return {
-    source: 'monday',
+    id: item.id,
     name: item.name || '',
-    phone,
-    email: '',
-    booked_date,
+    callDate,
     outcome,
-    closer_assigned: pickCol(item, MONDAY_COL.closer) || '',
-    setter_assigned: pickCol(item, MONDAY_COL.setter) || '',
-    cash_collected: Number(pickCol(item, MONDAY_COL.collected) || 0),
-    cash_contracted: Number(pickCol(item, MONDAY_COL.contracted) || 0),
-    lead_source: pickCol(item, MONDAY_COL.keyword) || '',
-    program: pickCol(item, MONDAY_COL.program) || '',
-    lost_reason: pickCol(item, MONDAY_COL.lost_reason) || '',
-    monday_item_id: item.id,
-    ghl_appointment_id: null,
-    _group: item.group?.title || '',
-    _has_45: !!date45,
-    _has_15: !!date15,
+    closer: closerList[0] || '',
+    closers: closerList,
+    setters: setterList,
+    contracted,
+    collected,
+    keyword,
+    lostReason,
+    program,
+    groupId,
+    groupTitle,
+    // Cached flags — spec-driven booleans, used by all rollups
+    isShown,
+    isClosed,
+    isNoShow,
+    isRescheduled,
+    isDqCanceled,
+    isOrganic,
+    isPaid,
   };
 }
 
-async function ghlEventToUnified(ev, calendarName) {
-  const contact = await fetchGhlContact(ev.contactId);
-  const first = contact?.firstName || '';
-  const last = contact?.lastName || '';
-  const combined = [first, last].filter(Boolean).join(' ') || contact?.name || '';
-  return {
-    source: 'ghl',
-    name: combined,
-    phone: normalizePhone(contact?.phone),
-    email: (contact?.email || '').toLowerCase(),
-    booked_date: toIsoDate(ev.startTime),
-    outcome: '', // GHL has appointmentStatus but not our outcome vocabulary
-    closer_assigned: '',
-    setter_assigned: '',
-    cash_collected: 0,
-    cash_contracted: 0,
-    lead_source: calendarName || 'GHL',
-    program: '',
-    lost_reason: '',
-    monday_item_id: null,
-    ghl_appointment_id: ev.id,
-    _ghl_status: ev.appointmentStatus || '',
-    _ghl_calendar_id: ev.calendarId,
-  };
+// ── Snapshot cache (per-process, TTL 60s) ───────────────
+// Everything downstream calls getBookedCallsKPIs(); one Monday fetch per minute
+// even under heavy dashboard use.
+const SNAPSHOT_TTL_MS = 60_000;
+let _snapshot = { fetchedAt: 0, items: null, promise: null };
+
+async function getSnapshot() {
+  const now = Date.now();
+  if (_snapshot.items && now - _snapshot.fetchedAt < SNAPSHOT_TTL_MS) {
+    return _snapshot.items;
+  }
+  if (_snapshot.promise) return _snapshot.promise;
+  _snapshot.promise = (async () => {
+    const raw = await fetchAllItems();
+    const projected = raw.map(projectItem);
+    _snapshot = { fetchedAt: Date.now(), items: projected, promise: null };
+    return projected;
+  })();
+  try {
+    return await _snapshot.promise;
+  } catch (e) {
+    _snapshot.promise = null;
+    throw e;
+  }
 }
 
-// ── Classify per Zach's rules v2 (2026-07-18) ────────────
-// Returns flags so downstream can bucket cleanly:
-//   is_booked      — call has a date (past or future)
-//   is_upcoming    — future date, hasn't happened yet — EXCLUDED from all rates
-//   is_completed   — past date w/ outcome set (real completed call)
-//   is_pitched     — completed AND outcome = Sold/Unsuccessful/Bloodwork Only
-//   is_closed      — completed AND outcome = Sold/Bloodwork Only
-//   is_dq          — completed AND outcome = DQ
-//   is_no_show     — completed AND outcome = No Show
-//   is_canceled    — completed AND outcome = Canceled
-//   is_nurture     — completed AND outcome = Nurture
-//   is_rebooked    — Needs Rebooking / Rebooked (may or may not be past-dated)
-export function classify(item, todayISO) {
-  const outcome = (item.outcome || '').trim();
-  const bookedDate = item.booked_date; // YYYY-MM-DD
-  const today = todayISO || new Date().toISOString().slice(0, 10);
+/** Force-refresh — used by cron / manual invalidation. */
+export function invalidateBookedCallsCache() {
+  _snapshot = { fetchedAt: 0, items: null, promise: null };
+}
 
-  const is_booked = true;
-  const is_upcoming = bookedDate && bookedDate > today;
-  // Past-dated OR no-date (rare) counts as "should have happened"
-  const isPastDate = bookedDate && bookedDate <= today;
+// ── Public API — SINGLE source function ──────────────────
+/**
+ * Returns the full KPI object for the given date window (inclusive).
+ * @param {{ from: string, to: string }} opts  ISO YYYY-MM-DD strings.
+ */
+export async function getBookedCallsKPIs({ from, to } = {}) {
+  if (!from || !to) throw new Error('getBookedCallsKPIs: from + to (YYYY-MM-DD) required');
+  const all = await getSnapshot();
+  const items = all.filter(it => it.callDate && it.callDate >= from && it.callDate <= to);
+  return computeKPIs(items, { from, to });
+}
 
-  // Completed: past date AND outcome is real (not blank / Sales Call Booked / 45 Qualified)
-  let is_completed = false;
-  if (isPastDate) {
-    if (item.source === 'ghl' && !outcome) {
-      // GHL row w/o Monday outcome — use appointmentStatus
-      const st = (item._ghl_status || '').toLowerCase();
-      is_completed = st === 'showed';
+/**
+ * Pure aggregator over a pre-filtered slice of projected items.
+ * Split out so tests + custom slices (per-closer view, per-source view) can reuse.
+ */
+export function computeKPIs(items, { from, to }) {
+  let booked = 0, shown = 0, closed = 0, noShows = 0, rescheduled = 0, dqCanceled = 0;
+  let cashContracted = 0, cashCollected = 0;
+  let paidBooked = 0, organicBooked = 0, paidClosed = 0, organicClosed = 0;
+
+  const closerAgg = new Map();
+  const setterAgg = new Map();
+  const stageAgg = new Map();
+  const lostReasonCounts = new Map();
+
+  for (const it of items) {
+    booked += 1;
+    if (it.isShown) shown += 1;
+    if (it.isClosed) closed += 1;
+    if (it.isNoShow) noShows += 1;
+    if (it.isRescheduled) rescheduled += 1;
+    if (it.isDqCanceled) dqCanceled += 1;
+    if (it.isClosed) {
+      cashContracted += it.contracted;
+      cashCollected += it.collected;
+    }
+
+    // Paid vs organic
+    if (it.isPaid) {
+      paidBooked += 1;
+      if (it.isClosed) paidClosed += 1;
     } else {
-      is_completed = !NOT_YET_OUTCOMES.has(outcome);
+      organicBooked += 1;
+      if (it.isClosed) organicClosed += 1;
+    }
+
+    // Per-closer (single closer; if multiple, first wins — Monday cap is 1)
+    const closerName = firstName(it.closer);
+    if (closerName) {
+      const row = ensureCloserRow(closerAgg, closerName);
+      row.booked += 1;
+      if (it.isShown) row.shown += 1;
+      if (it.isClosed) {
+        row.closed += 1;
+        row.cashContracted += it.contracted;
+        row.cashCollected += it.collected;
+      }
+    }
+
+    // Per-setter — 0.5/0.5 split on multi. Only credit named setters (spec).
+    const setterFirsts = it.setters
+      .map(firstName)
+      .filter(n => NAMED_SETTERS.has(n.toLowerCase()));
+    if (setterFirsts.length > 0) {
+      const weight = 1 / setterFirsts.length;
+      for (const raw of setterFirsts) {
+        const name = raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase();
+        const row = ensureSetterRow(setterAgg, name);
+        row.booked += weight;
+        if (it.isShown) row.shown += weight;
+        if (it.isClosed) row.closed += weight;
+      }
+    }
+
+    // Per-stage (group)
+    if (it.groupId) {
+      const row = ensureStageRow(stageAgg, it.groupId, it.groupTitle);
+      row.booked += 1;
+      if (it.isShown) row.shown += 1;
+      if (it.isClosed) {
+        row.closed += 1;
+        row.cashContracted += it.contracted;
+        row.cashCollected += it.collected;
+      }
+    }
+
+    // Lost reasons — only Unsuccessful rows, drop nulls
+    if (it.outcome === OUTCOME.UNSUCCESSFUL && it.lostReason) {
+      lostReasonCounts.set(it.lostReason, (lostReasonCounts.get(it.lostReason) || 0) + 1);
     }
   }
 
-  const is_pitched = is_completed && PITCHED_OUTCOMES.has(outcome);
-  const is_closed = is_completed && CLOSED_OUTCOMES.has(outcome);
-  const is_dq = is_completed && DQ_OUTCOMES.has(outcome);
-  const is_no_show = is_completed && NO_SHOW_OUTCOMES.has(outcome);
-  const is_canceled = is_completed && CANCELED_OUTCOMES.has(outcome);
-  const is_nurture = is_completed && NURTURE_OUTCOMES.has(outcome);
-  const is_rebooked = REBOOKED_OUTCOMES.has(outcome);
+  // Show Rate excludes polite reschedules (Needs Rebooking) per industry standard.
+  const showRate = (shown + noShows) > 0 ? shown / (shown + noShows) : null;
+  const closeRate = shown > 0 ? closed / shown : null;
+  const rescheduleRate = booked > 0 ? rescheduled / booked : null;
 
-  // Legacy alias — some callers still reference is_shown
-  const is_shown = is_pitched;
+  const byCloser = [...closerAgg.values()].sort((a, b) => b.cashCollected - a.cashCollected);
+  const bySetter = [...setterAgg.values()].map(r => ({
+    ...r,
+    booked: round2(r.booked),
+    shown: round2(r.shown),
+    closed: round2(r.closed),
+  })).sort((a, b) => b.booked - a.booked);
+  const byStage = [...stageAgg.values()].sort((a, b) => b.booked - a.booked);
+  const lostReasons = [...lostReasonCounts.entries()]
+    .map(([reason, count]) => ({ reason, count }))
+    .sort((a, b) => b.count - a.count);
 
   return {
-    is_booked, is_upcoming, is_completed,
-    is_pitched, is_closed, is_dq, is_no_show, is_canceled, is_nurture, is_rebooked,
-    is_shown, // legacy
+    window: { from, to },
+    booked,
+    shown,
+    closed,
+    noShows,
+    rescheduled,
+    dqCanceled,
+    showRate,
+    closeRate,
+    rescheduleRate,
+    cashContracted,
+    cashCollected,
+    byCloser,
+    bySetter,
+    byStage,
+    bySource: { paidBooked, organicBooked, paidClosed, organicClosed },
+    lostReasons,
+    // ads.spend/cpbc/cpa require Meta pull; overview-api joins them in.
+    ads: { spend: null, cpbc: null, cpa: null },
+    items,
   };
 }
 
-// ── Dedupe ───────────────────────────────────────────────
-// Match if (normalized name matches AND either normalized phone matches OR booked_date is within 1 day).
-// If matched: keep Monday side (has outcome + cash) but keep GHL id + calendar for reference.
-function dedupe(unified) {
-  const monday = unified.filter(u => u.source === 'monday');
-  const ghl = unified.filter(u => u.source === 'ghl');
-
-  const out = [];
-  const mondayByKey = new Map();
-  for (const m of monday) {
-    const key = normalizeName(m.name);
-    if (!key) { out.push(m); continue; }
-    if (!mondayByKey.has(key)) mondayByKey.set(key, []);
-    mondayByKey.get(key).push(m);
-    out.push(m);
+function ensureCloserRow(map, name) {
+  if (!map.has(name)) {
+    map.set(name, { name, booked: 0, shown: 0, closed: 0, cashContracted: 0, cashCollected: 0 });
   }
-
-  let matched = 0;
-  let ghlOnly = 0;
-  for (const g of ghl) {
-    const gName = normalizeName(g.name);
-    const candidates = gName ? (mondayByKey.get(gName) || []) : [];
-    let match = null;
-    for (const m of candidates) {
-      const phoneMatch = m.phone && g.phone && m.phone === g.phone;
-      const dateClose = m.booked_date && g.booked_date &&
-        Math.abs(new Date(m.booked_date) - new Date(g.booked_date)) <= 24 * 3600 * 1000;
-      if (phoneMatch || dateClose) { match = m; break; }
-    }
-    if (match) {
-      match.source = 'both';
-      match.ghl_appointment_id = g.ghl_appointment_id;
-      // Fill in email if Monday had none
-      if (!match.email && g.email) match.email = g.email;
-      matched += 1;
-    } else {
-      out.push(g);
-      ghlOnly += 1;
-    }
+  return map.get(name);
+}
+function ensureSetterRow(map, name) {
+  if (!map.has(name)) map.set(name, { name, booked: 0, shown: 0, closed: 0 });
+  return map.get(name);
+}
+function ensureStageRow(map, id, title) {
+  if (!map.has(id)) {
+    map.set(id, {
+      groupId: id, groupTitle: title || id,
+      booked: 0, shown: 0, closed: 0, cashContracted: 0, cashCollected: 0,
+    });
   }
-
-  const mondayOnly = monday.length - matched;
-  return { unified: out, stats: { monday_total: monday.length, ghl_total: ghl.length, matched, monday_only: mondayOnly, ghl_only: ghlOnly } };
+  return map.get(id);
+}
+function round2(n) {
+  return Math.round(n * 100) / 100;
 }
 
-// ── Main entry ───────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+// LEGACY EXPORTS — thin wrappers so routes.js + overview-api.js keep working.
+// Each maps the new getBookedCallsKPIs() output to the old dashboard-facing
+// shape. New code should call getBookedCallsKPIs() directly.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * @deprecated Legacy wrapper — call getBookedCallsKPIs({ from, to }) instead.
+ * Returns the old "unified" shape used by routes.js /booked-calls/* handlers.
+ */
 export async function fetchBookedCallsUnified(days) {
   const endD = new Date();
   const startD = new Date();
   startD.setDate(startD.getDate() - (days - 1));
-  const start = startD.toISOString().slice(0, 10);
-  const end = endD.toISOString().slice(0, 10);
+  const from = startD.toISOString().slice(0, 10);
+  const to = endD.toISOString().slice(0, 10);
+  const kpis = await getBookedCallsKPIs({ from, to });
 
-  // Monday: fetch all items (paginated), then filter by booked_date in window later.
-  const mondayItems = await fetchBookedCallsItems();
-  const mondayUnified = mondayItems.map(mondayItemToUnified);
-
-  // GHL: fetch events per configured sales calendar over the window (widen 7d each side
-  // so booking-lead-time captures near-window overlaps).
-  const salesCalIds = (process.env.GHL_SALES_CALENDAR_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
-  const discoveryCalIds = (process.env.GHL_DISCOVERY_CALENDAR_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
-  const allCalIds = [...new Set([...salesCalIds, ...discoveryCalIds])];
-
-  const startMs = new Date(start + 'T00:00:00Z').getTime() - 7 * 24 * 3600 * 1000;
-  const endMs = new Date(end + 'T23:59:59Z').getTime() + 7 * 24 * 3600 * 1000;
-
-  const calNameById = new Map();
-  // Cheap name lookup — GHL_SALES / DISCOVERY are just IDs; use fixed name if unknown.
-  // Discovery = "15", Sales = "45"
-  for (const id of salesCalIds) calNameById.set(id, `GHL Sales (${id.slice(-4)})`);
-  for (const id of discoveryCalIds) calNameById.set(id, `GHL Discovery (${id.slice(-4)})`);
-
-  let ghlUnified = [];
-  for (const calId of allCalIds) {
-    try {
-      const events = await fetchGhlEventsForCalendar(calId, startMs, endMs);
-      // Only keep events whose startTime falls inside our real window
-      const inWindow = events.filter(ev => {
-        const iso = toIsoDate(ev.startTime);
-        return iso && iso >= start && iso <= end;
-      });
-      const calName = calNameById.get(calId) || 'GHL';
-      // Enrich with contact info (parallel by calendar, sequential within to be gentle)
-      for (const ev of inWindow) {
-        ghlUnified.push(await ghlEventToUnified(ev, calName));
-      }
-    } catch (e) {
-      console.warn(`[booked-calls] GHL fetch failed for ${calId}:`, e.message);
-    }
-  }
-
-  // Filter monday side by booked_date in window
-  const mondayInWindow = mondayUnified.filter(u => u.booked_date && u.booked_date >= start && u.booked_date <= end);
-
-  const { unified, stats } = dedupe([...mondayInWindow, ...ghlUnified]);
-
-  return { window: { start, end, days }, items: unified, dedup_stats: stats };
-}
-
-// ── Aggregations ─────────────────────────────────────────
-export function summarize(items) {
-  const today = new Date().toISOString().slice(0, 10);
-  let booked = 0, upcoming = 0, completed = 0;
-  let pitched = 0, closed = 0, dq = 0, no_show = 0, canceled = 0, nurture = 0, rebooked = 0;
-  let cash_collected = 0, cash_contracted = 0;
-  const bySource = { monday: 0, ghl: 0, both: 0 };
-
-  for (const item of items) {
-    const c = classify(item, today);
-    if (c.is_booked) booked += 1;
-    if (c.is_upcoming) upcoming += 1;
-    if (c.is_completed) completed += 1;
-    if (c.is_pitched) pitched += 1;
-    if (c.is_closed) closed += 1;
-    if (c.is_dq) dq += 1;
-    if (c.is_no_show) no_show += 1;
-    if (c.is_canceled) canceled += 1;
-    if (c.is_nurture) nurture += 1;
-    if (c.is_rebooked) rebooked += 1;
-    cash_collected += Number(item.cash_collected || 0);
-    cash_contracted += Number(item.cash_contracted || 0);
-    bySource[item.source] = (bySource[item.source] || 0) + 1;
-  }
+  // Map projected items → legacy unified item shape (source/name/outcome/etc)
+  const legacyItems = kpis.items.map(legacyItemShape);
   return {
-    // Volume buckets — never overlap for the same call
-    booked, upcoming, completed,
-    pitched, closed, dq, no_show, canceled, nurture, rebooked,
-    // Cash
-    cash_collected, cash_contracted,
-    // Rates (per Zach 2026-07-18 v2)
-    show_rate: completed > 0 ? pitched / completed : null,   // pitched / completed
-    close_rate: pitched > 0 ? closed / pitched : null,        // closed / pitched
-    dq_rate: completed > 0 ? dq / completed : null,           // dq / completed
-    // Legacy field names for backwards compat
-    shown: pitched,
-    by_source: bySource,
+    window: { start: from, end: to, days },
+    items: legacyItems,
+    dedup_stats: { monday_total: legacyItems.length, ghl_total: 0, matched: 0, monday_only: legacyItems.length, ghl_only: 0 },
+    // Also expose the fresh KPI object so callers can adopt incrementally.
+    kpis,
   };
 }
 
-function bumpAgg(map, key) {
-  if (!map[key]) map[key] = { key, booked: 0, upcoming: 0, completed: 0, pitched: 0, closed: 0, dq: 0, no_show: 0, cash_collected: 0, cash_contracted: 0 };
-  return map[key];
+function legacyItemShape(it) {
+  return {
+    source: 'monday',
+    name: it.name,
+    phone: '',
+    email: '',
+    booked_date: it.callDate,
+    outcome: it.outcome,
+    closer_assigned: it.closer,
+    setter_assigned: it.setters.join(', '),
+    cash_collected: it.collected,
+    cash_contracted: it.contracted,
+    lead_source: it.keyword,
+    program: it.program,
+    lost_reason: it.lostReason,
+    monday_item_id: it.id,
+    ghl_appointment_id: null,
+    _group: it.groupTitle,
+    // Retain flags so classify() can be a pure re-projection
+    _isShown: it.isShown,
+    _isClosed: it.isClosed,
+    _isNoShow: it.isNoShow,
+    _isDqCanceled: it.isDqCanceled,
+    _isPaid: it.isPaid,
+  };
 }
 
-export function groupByCloser(items) {
-  const today = new Date().toISOString().slice(0, 10);
-  const map = {};
-  for (const item of items) {
-    const key = item.closer_assigned || '(unassigned)';
-    const row = bumpAgg(map, key);
-    const c = classify(item, today);
-    if (c.is_booked) row.booked += 1;
-    if (c.is_upcoming) row.upcoming += 1;
-    if (c.is_completed) row.completed += 1;
-    if (c.is_pitched) row.pitched += 1;
-    if (c.is_closed) row.closed += 1;
-    if (c.is_dq) row.dq += 1;
-    if (c.is_no_show) row.no_show += 1;
-    row.cash_collected += Number(item.cash_collected || 0);
-    row.cash_contracted += Number(item.cash_contracted || 0);
+// classify() — legacy pass-through. Returns the flag object the old code used.
+// The rich (is_completed, is_pitched, is_upcoming, …) fields the old overview
+// leaned on are derived from spec-compliant flags here.
+export function classify(item) {
+  const shown = !!item._isShown;
+  const closed = !!item._isClosed;
+  const noShow = !!item._isNoShow;
+  const dqCanceled = !!item._isDqCanceled;
+  return {
+    is_booked: true,
+    is_upcoming: false,
+    is_completed: shown || noShow || dqCanceled || closed || (item.outcome === OUTCOME.NURTURE) || (item.outcome === OUTCOME.REBOOKED),
+    is_pitched: shown,
+    is_shown: shown,
+    is_closed: closed,
+    is_dq: item.outcome === OUTCOME.DQ,
+    is_no_show: item.outcome === OUTCOME.NO_SHOW,
+    is_canceled: item.outcome === OUTCOME.CANCELED,
+    is_nurture: item.outcome === OUTCOME.NURTURE,
+    is_rebooked: item.outcome === OUTCOME.REBOOKED || item.outcome === OUTCOME.NEEDS_REBOOKING,
+  };
+}
+
+/**
+ * @deprecated Use getBookedCallsKPIs().
+ * Returns the totals-object shape the /booked-calls/summary endpoint used to emit,
+ * mapped from the new KPI numbers.
+ */
+export function summarize(items) {
+  let booked = 0, shown = 0, closed = 0, noShow = 0, canceled = 0, dq = 0, nurture = 0, rebooked = 0;
+  let cashCollected = 0, cashContracted = 0;
+  for (const it of items) {
+    booked += 1;
+    if (it._isShown) shown += 1;
+    if (it._isClosed) { closed += 1; cashCollected += Number(it.cash_collected || 0); cashContracted += Number(it.cash_contracted || 0); }
+    if (it.outcome === OUTCOME.NO_SHOW) noShow += 1;
+    if (it.outcome === OUTCOME.CANCELED) canceled += 1;
+    if (it.outcome === OUTCOME.DQ) dq += 1;
+    if (it.outcome === OUTCOME.NURTURE) nurture += 1;
+    if (it.outcome === OUTCOME.REBOOKED || it.outcome === OUTCOME.NEEDS_REBOOKING) rebooked += 1;
   }
-  return Object.values(map).map(r => ({
-    closer: r.key,
-    booked: r.booked,
-    upcoming: r.upcoming,
-    completed: r.completed,
-    pitched: r.pitched,
-    closed: r.closed,
-    dq: r.dq,
-    no_show: r.no_show,
-    cash_collected: r.cash_collected,
-    cash_contracted: r.cash_contracted,
-    show_rate: r.completed > 0 ? r.pitched / r.completed : null,
-    close_rate: r.pitched > 0 ? r.closed / r.pitched : null,
+  // For legacy "completed" (dashboard secondary row), a completed call = anything
+  // whose outcome isn't blank/upcoming. In the new spec every row we return has
+  // a `callDate <= today` semantics baked in when window ends today. Include all
+  // non-blank outcomes.
+  const completed = booked - items.filter(i => !i.outcome).length;
+  return {
+    booked, completed, upcoming: 0,
+    pitched: shown, shown, closed,
+    dq, no_show: noShow, canceled, nurture, rebooked,
+    cash_collected: cashCollected, cash_contracted: cashContracted,
+    show_rate: (shown + noShow) > 0 ? shown / (shown + noShow) : null,
+    close_rate: shown > 0 ? closed / shown : null,
+    dq_rate: completed > 0 ? dq / completed : null,
+    by_source: { monday: booked, ghl: 0, both: 0 },
+  };
+}
+
+/** @deprecated Prefer getBookedCallsKPIs().byCloser. */
+export function groupByCloser(items) {
+  const map = new Map();
+  for (const it of items) {
+    const key = firstName(it.closer_assigned) || '(unassigned)';
+    if (!map.has(key)) {
+      map.set(key, {
+        closer: key, booked: 0, shown: 0, pitched: 0, closed: 0,
+        cash_collected: 0, cash_contracted: 0, completed: 0, dq: 0, no_show: 0,
+      });
+    }
+    const r = map.get(key);
+    r.booked += 1;
+    r.completed += 1; // legacy field — treat every row in window as completed
+    if (it._isShown) { r.shown += 1; r.pitched += 1; }
+    if (it.outcome === OUTCOME.DQ) r.dq += 1;
+    if (it.outcome === OUTCOME.NO_SHOW) r.no_show += 1;
+    if (it._isClosed) {
+      r.closed += 1;
+      r.cash_collected += Number(it.cash_collected || 0);
+      r.cash_contracted += Number(it.cash_contracted || 0);
+    }
+  }
+  return [...map.values()].map(r => ({
+    ...r,
+    show_rate: r.completed > 0 ? r.shown / r.completed : null,
+    close_rate: r.shown > 0 ? r.closed / r.shown : null,
     dq_rate: r.completed > 0 ? r.dq / r.completed : null,
-    // Legacy alias for old dashboard code
-    shown: r.pitched,
   })).sort((a, b) => b.cash_collected - a.cash_collected);
 }
 
+/** @deprecated Prefer getBookedCallsKPIs().bySetter. */
 export function groupBySetter(items) {
-  const today = new Date().toISOString().slice(0, 10);
-  const map = {};
-  for (const item of items) {
-    const raw = item.setter_assigned || '(unassigned)';
-    const names = raw === '(unassigned)' ? ['(unassigned)'] : raw.split(',').map(s => s.trim()).filter(Boolean);
-    for (const name of names) {
-      const row = bumpAgg(map, name);
-      const c = classify(item, today);
-      if (c.is_booked) row.booked += 1;
-      if (c.is_completed) row.completed += 1;
-      if (c.is_closed) row.closed += 1;
+  const map = new Map();
+  for (const it of items) {
+    const rawList = (it.setter_assigned || '').split(',').map(s => s.trim()).filter(Boolean);
+    const named = rawList
+      .map(firstName)
+      .filter(n => NAMED_SETTERS.has(n.toLowerCase()))
+      .map(n => n.charAt(0).toUpperCase() + n.slice(1).toLowerCase());
+    if (named.length === 0) continue;
+    const weight = 1 / named.length;
+    for (const name of named) {
+      if (!map.has(name)) map.set(name, { setter: name, booked: 0, shown: 0, closed: 0, dms_sent: null });
+      const r = map.get(name);
+      r.booked += weight;
+      if (it._isShown) r.shown += weight;
+      if (it._isClosed) r.closed += weight;
     }
   }
-  return Object.values(map).map(r => ({
-    setter: r.key,
-    booked: r.booked,
-    completed: r.completed,
-    closed: r.closed,
-    dms_sent: null,
+  return [...map.values()].map(r => ({
+    ...r, booked: round2(r.booked), shown: round2(r.shown), closed: round2(r.closed),
   })).sort((a, b) => b.booked - a.booked);
 }
 
+/** @deprecated Prefer getBookedCallsKPIs().bySource. */
 export function groupBySource(items) {
-  const map = {};
-  for (const item of items) {
-    const key = item.lead_source || '(unknown)';
-    const row = bumpAgg(map, key);
-    const c = classify(item);
-    if (c.is_booked) row.booked += 1;
-    if (c.is_shown) row.shown += 1;
-    if (c.is_closed) row.closed += 1;
-    row.cash_collected += Number(item.cash_collected || 0);
+  const map = new Map();
+  for (const it of items) {
+    const key = it.lead_source || '(unknown)';
+    if (!map.has(key)) map.set(key, { source: key, booked: 0, shown: 0, closed: 0, cash_collected: 0 });
+    const r = map.get(key);
+    r.booked += 1;
+    if (it._isShown) r.shown += 1;
+    if (it._isClosed) { r.closed += 1; r.cash_collected += Number(it.cash_collected || 0); }
   }
-  return Object.values(map).map(r => ({
-    source: r.key,
-    booked: r.booked, shown: r.shown, closed: r.closed,
-    cash_collected: r.cash_collected,
-  })).sort((a, b) => b.booked - a.booked);
+  return [...map.values()].sort((a, b) => b.booked - a.booked);
 }
 
-/**
- * Aggregate lost reasons over items whose outcome represents a *loss*.
- * Skips blank / "(not filled in)" — Zach filled the column via the backfill script,
- * so anything still blank is not real signal.
- */
-const LOSS_OUTCOMES = new Set([
-  'No Show', 'Not Interested', 'DQ', 'Ghosted', 'Ghosted After Call',
-  'Nurture', 'Canceled', 'Unsuccessful', 'Needs Rebooking',
-]);
-
+/** @deprecated Prefer getBookedCallsKPIs().lostReasons. */
 export function groupByLostReason(items) {
-  const map = {};
-  for (const item of items) {
-    const outcome = (item.outcome || '').trim();
-    if (!LOSS_OUTCOMES.has(outcome)) continue;
-    const reason = (item.lost_reason || '').trim();
-    if (!reason) continue; // suppress blanks — see comment above
-    map[reason] = (map[reason] || 0) + 1;
+  const map = new Map();
+  for (const it of items) {
+    if (it.outcome !== OUTCOME.UNSUCCESSFUL) continue;
+    const reason = (it.lost_reason || '').trim();
+    if (!reason) continue;
+    map.set(reason, (map.get(reason) || 0) + 1);
   }
-  return Object.entries(map)
-    .map(([reason, count]) => ({ reason, count }))
+  return [...map.entries()].map(([reason, count]) => ({ reason, count }))
     .sort((a, b) => b.count - a.count);
 }
 
-/**
- * Daily counts over the window — used for the booked sparkline on the overview.
- * Returns { dates: [...isoDate], booked: [n], shown: [n], closed: [n] }.
- */
+/** @deprecated. Kept so the /booked-calls/summary sparkline still renders. */
 export function dailySeries(items, start, end) {
   const days = {};
-  const startD = new Date(start + 'T00:00:00Z');
-  const endD = new Date(end + 'T00:00:00Z');
-  for (let d = new Date(startD); d <= endD; d.setUTCDate(d.getUTCDate() + 1)) {
-    const iso = d.toISOString().slice(0, 10);
-    days[iso] = { booked: 0, shown: 0, closed: 0 };
+  for (let d = new Date(start + 'T00:00:00Z'); d <= new Date(end + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + 1)) {
+    days[d.toISOString().slice(0, 10)] = { booked: 0, shown: 0, closed: 0 };
   }
-  for (const item of items) {
-    const iso = item.booked_date;
+  for (const it of items) {
+    const iso = it.booked_date;
     if (!iso || !days[iso]) continue;
-    const c = classify(item);
-    if (c.is_booked) days[iso].booked += 1;
-    if (c.is_shown) days[iso].shown += 1;
-    if (c.is_closed) days[iso].closed += 1;
+    days[iso].booked += 1;
+    if (it._isShown) days[iso].shown += 1;
+    if (it._isClosed) days[iso].closed += 1;
   }
   const dates = Object.keys(days).sort();
   return {
@@ -537,40 +676,23 @@ export function dailySeries(items, start, end) {
   };
 }
 
-// ── Ad-attribution filter ────────────────────────────────
-// Reality check (2026-07-17): the Monday `keyword` column (dropdown_mkpq2nxj) is
-// empty across all 654 items on the Booked Calls board. There is no populated
-// lead_source signal on any row.
-// Per Zach's biweekly-report skill: "No organic/paid split — marketing spend
-// is marketing spend." Ads are the primary funnel, so default = ad-attributed.
-// EXCLUDE anything explicitly flagged organic/referral/manual/word-of-mouth.
-const ORGANIC_MARKERS = ['organic', 'referral', 'manual', 'word of mouth'];
-
-function isAdAttributed(item) {
-  const src = (item.lead_source || '').toLowerCase();
-  if (!src) return item.source !== 'ghl'; // GHL-only rows always have a cal name; empty src = Monday
-  return !ORGANIC_MARKERS.some(m => src.includes(m));
-}
-
+/** @deprecated. Ads tab: return paid-attributed subset (spec-compliant). */
 export function filterAdAttributed(items) {
-  return items.filter(isAdAttributed);
+  return items.filter(it => it._isPaid);
 }
 
-// Per-day series of ad-attributed booked / cash — sparklines for the Ads tab.
+/** @deprecated. Per-day paid-attributed spend/cash for the Ads sparkline. */
 export function dailyFromAds(items, start, end) {
-  const startD = new Date(start + 'T00:00:00Z');
-  const endD = new Date(end + 'T00:00:00Z');
   const days = {};
-  for (let d = new Date(startD); d <= endD; d.setUTCDate(d.getUTCDate() + 1)) {
+  for (let d = new Date(start + 'T00:00:00Z'); d <= new Date(end + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + 1)) {
     days[d.toISOString().slice(0, 10)] = { booked: 0, collected: 0, contracted: 0 };
   }
-  const ad = filterAdAttributed(items);
-  for (const item of ad) {
-    const iso = item.booked_date;
+  for (const it of items.filter(x => x._isPaid)) {
+    const iso = it.booked_date;
     if (!iso || !days[iso]) continue;
     days[iso].booked += 1;
-    days[iso].collected += Number(item.cash_collected || 0);
-    days[iso].contracted += Number(item.cash_contracted || 0);
+    days[iso].collected += Number(it.cash_collected || 0);
+    days[iso].contracted += Number(it.cash_contracted || 0);
   }
   const dates = Object.keys(days).sort();
   return {

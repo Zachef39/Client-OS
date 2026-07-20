@@ -5,17 +5,17 @@ import { fetchRetry } from './http.js';
 
 const MONDAY_API = 'https://api.monday.com/v2';
 
-// Column IDs — locked from biweekly-report/run.py (2026-07-04).
+// Column IDs — post-2026-07-20 cleanup. Single date column, `person`=closer, `multiple_person_mkvsxzf9`=setter.
+// All items on this board are Sales calls (formerly "45 calls"); the qualifying/15-call funnel lives on a separate board.
 const COL = {
-  date_15: 'date4',
-  date_45: 'date_mkxxtzhe',
+  date: 'date4',                          // sole Call Date column
   outcome: 'status',
   outcome_notes: 'text_mkq7r20t',
   contracted: 'numeric_mkpq8d77',
   collected: 'numeric_mkpq7kcy',
   program: 'dropdown_mkpq36f8',
   lost_reason: 'dropdown_mm2qma67',
-  closer: 'person',                       // "45 Call" people col (single)
+  closer: 'person',                       // "Sales" people col (single)
   setter: 'multiple_person_mkvsxzf9',     // "DMer" people col (multi)
 };
 
@@ -85,7 +85,8 @@ function parsePersonValue(raw) {
   }
 }
 
-const NOT_SHOWN_OUTCOMES = new Set(['Needs Rebooking', 'No Show', 'Canceled', '']);
+// Spec: Shown = Sold + Unsuccessful + Bloodwork Only. Anything else = not shown.
+const SHOWN_OUTCOMES = new Set(['Sold', 'Unsuccessful', 'Bloodwork Only']);
 
 function requireEnv(name) {
   const v = process.env[name];
@@ -180,54 +181,42 @@ export function computeSalesSummary(items, start, end) {
   const startD = new Date(start + 'T00:00:00');
   const endD = new Date(end + 'T23:59:59');
 
-  // 15s: has 15-date in window AND no 45-date at all (biweekly rule)
-  const window15 = items.filter(it => {
-    const d15 = parseDate(pickCol(it, 'date_15'));
-    return d15 && d15 >= startD && d15 <= endD && !parseDate(pickCol(it, 'date_45'));
+  // All items on this board = Sales calls. Filter by single Call Date column.
+  const inWindow = items.filter(it => {
+    const d = parseDate(pickCol(it, 'date'));
+    return d && d >= startD && d <= endD;
   });
 
-  const shown15 = window15.filter(it => !NOT_SHOWN_OUTCOMES.has(pickCol(it, 'outcome')));
+  const shown = inWindow.filter(it => SHOWN_OUTCOMES.has(pickCol(it, 'outcome')));
 
-  // 45s: has 45-date in window
-  const booked45 = items.filter(it => {
-    const d45 = parseDate(pickCol(it, 'date_45'));
-    return d45 && d45 >= startD && d45 <= endD;
-  });
-  const shown45 = booked45.filter(it => !NOT_SHOWN_OUTCOMES.has(pickCol(it, 'outcome')));
-
-  // Sales: contracted > 0 OR collected > 0 within window
+  // Closed = Sold/Bloodwork Only OR any cash on record (spec: "anything w/ money = close").
   const sales = [];
-  for (const it of items) {
+  for (const it of inWindow) {
+    const outcome = pickCol(it, 'outcome');
     const contracted = Number(pickCol(it, 'contracted') || 0);
     const collected = Number(pickCol(it, 'collected') || 0);
-    if (contracted <= 0 && collected <= 0) continue;
-    const d15 = parseDate(pickCol(it, 'date_15'));
-    const d45 = parseDate(pickCol(it, 'date_45'));
-    const inWindow =
-      (d15 && d15 >= startD && d15 <= endD) ||
-      (d45 && d45 >= startD && d45 <= endD);
-    if (!inWindow) continue;
+    const closedByOutcome = outcome === 'Sold' || outcome === 'Bloodwork Only';
+    const closedByCash = contracted > 0 || collected > 0;
+    if (!closedByOutcome && !closedByCash) continue;
     sales.push({
       name: it.name,
-      outcome: pickCol(it, 'outcome'),
+      outcome,
       group: it.group?.title || '',
-      d15: pickCol(it, 'date_15') || null,
-      d45: pickCol(it, 'date_45') || null,
+      date: pickCol(it, 'date') || null,
       contracted,
       collected,
       program: pickCol(it, 'program'),
       notes: pickCol(it, 'outcome_notes'),
     });
   }
-  sales.sort((a, b) => (b.d45 || b.d15 || '').localeCompare(a.d45 || a.d15 || ''));
+  sales.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
-  // Lost reasons within window
+  // Lost reasons — Unsuccessful only, drop blanks (per spec — no "(not filled in)").
   const lostCounter = {};
-  const lossOutcomes = new Set(['Unsuccessful', 'Needs Rebooking', 'No Show', 'DQ', 'Canceled', 'Nurture', 'Ghosted After Call']);
-  for (const it of [...window15, ...booked45]) {
-    const outcome = pickCol(it, 'outcome');
-    if (!lossOutcomes.has(outcome)) continue;
-    const reason = pickCol(it, 'lost_reason').trim() || '(not filled in)';
+  for (const it of inWindow) {
+    if (pickCol(it, 'outcome') !== 'Unsuccessful') continue;
+    const reason = pickCol(it, 'lost_reason').trim();
+    if (!reason) continue;
     lostCounter[reason] = (lostCounter[reason] || 0) + 1;
   }
   const lostReasons = Object.entries(lostCounter)
@@ -240,12 +229,12 @@ export function computeSalesSummary(items, start, end) {
 
   return {
     window: { start, end },
-    booked: window15.length + booked45.length,
-    booked_15: window15.length,
-    booked_45: booked45.length,
-    shown: shown15.length + shown45.length,
-    shown_15: shown15.length,
-    shown_45: shown45.length,
+    booked: inWindow.length,
+    booked_15: 0,                 // legacy field — 15-call funnel lives on a separate board now
+    booked_45: inWindow.length,
+    shown: shown.length,
+    shown_15: 0,
+    shown_45: shown.length,
     closed: sales.length,
     cash_collected: cashCollected,
     cash_contracted: cashContracted,
@@ -270,24 +259,25 @@ export function computeByCloser(items, start, end) {
   };
 
   for (const it of items) {
-    const group = it.group?.title || '(no group)';
-    const d15 = parseDate(pickCol(it, 'date_15'));
-    const d45 = parseDate(pickCol(it, 'date_45'));
+    const d = parseDate(pickCol(it, 'date'));
+    if (!d || d < startD || d > endD) continue;
+
+    // Prefer real closer from `person` column; fall back to Monday group only if no closer set.
+    const closer = pickCol(it, 'closer').trim();
+    const key = closer || (it.group?.title || '(no closer)');
+
     const outcome = pickCol(it, 'outcome');
     const contracted = Number(pickCol(it, 'contracted') || 0);
     const collected = Number(pickCol(it, 'collected') || 0);
+    const closedByOutcome = outcome === 'Sold' || outcome === 'Bloodwork Only';
+    const closedByCash = contracted > 0 || collected > 0;
 
-    const in15 = d15 && d15 >= startD && d15 <= endD && !d45;
-    const in45 = d45 && d45 >= startD && d45 <= endD;
-
-    if (in15 || in45) {
-      bump(group, 'booked');
-      if (!NOT_SHOWN_OUTCOMES.has(outcome)) bump(group, 'shown');
-    }
-    if ((in15 || in45) && (contracted > 0 || collected > 0)) {
-      bump(group, 'closed');
-      bump(group, 'cash_collected', collected);
-      bump(group, 'cash_contracted', contracted);
+    bump(key, 'booked');
+    if (SHOWN_OUTCOMES.has(outcome)) bump(key, 'shown');
+    if (closedByOutcome || closedByCash) {
+      bump(key, 'closed');
+      bump(key, 'cash_collected', collected);
+      bump(key, 'cash_contracted', contracted);
     }
   }
 
@@ -318,33 +308,22 @@ export function computeDailySparks(items, start, end) {
   const cash = Array(dayCount).fill(0);
 
   for (const it of items) {
-    const d15s = pickCol(it, 'date_15');
-    const d45s = pickCol(it, 'date_45');
+    const ds = pickCol(it, 'date');
+    if (!ds) continue;
+    const i = idx(ds);
+    if (i < 0) continue;
+
     const outcome = pickCol(it, 'outcome');
     const contracted = Number(pickCol(it, 'contracted') || 0);
     const collected = Number(pickCol(it, 'collected') || 0);
+    const closedByOutcome = outcome === 'Sold' || outcome === 'Bloodwork Only';
+    const closedByCash = contracted > 0 || collected > 0;
 
-    if (d15s && !d45s) {
-      const i = idx(d15s);
-      if (i >= 0) {
-        booked[i] += 1;
-        if (!NOT_SHOWN_OUTCOMES.has(outcome)) shown[i] += 1;
-        if (contracted > 0 || collected > 0) {
-          closed[i] += 1;
-          cash[i] += collected;
-        }
-      }
-    }
-    if (d45s) {
-      const i = idx(d45s);
-      if (i >= 0) {
-        booked[i] += 1;
-        if (!NOT_SHOWN_OUTCOMES.has(outcome)) shown[i] += 1;
-        if (contracted > 0 || collected > 0) {
-          closed[i] += 1;
-          cash[i] += collected;
-        }
-      }
+    booked[i] += 1;
+    if (SHOWN_OUTCOMES.has(outcome)) shown[i] += 1;
+    if (closedByOutcome || closedByCash) {
+      closed[i] += 1;
+      cash[i] += collected;
     }
   }
   return { days, booked, shown, closed, cash };

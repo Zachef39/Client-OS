@@ -1,7 +1,7 @@
 // v2 API routes — mounted at /api/v2/*
 // Exports a function that takes ({ app, supabase }) and attaches the routes.
 
-import { syncMetaAds } from './meta-ads.js';
+import { syncMetaAds, getMetaSpend } from './meta-ads.js';
 import {
   fetchBookedCallsItems,
   computeSalesSummary,
@@ -18,6 +18,8 @@ import {
   dailySeries as bcDailySeries,
   filterAdAttributed as bcFilterAdAttributed,
   dailyFromAds as bcDailyFromAds,
+  getBookedCallsKPIs,
+  invalidateBookedCallsCache,
 } from './booked-calls.js';
 import {
   seedIfEmpty as seedTeamIfEmpty,
@@ -189,6 +191,7 @@ export function registerV2Routes({ app, supabase }) {
       // Invalidate cached summaries — new ad rows may shift ROAS + capacity views.
       invalidate('monday:');
       invalidate('bc:');
+      invalidateBookedCallsCache();
       res.json({ ok: true, ...result, days });
     } catch (e) {
       console.error('[ads/sync] error:', e);
@@ -389,14 +392,16 @@ export function registerV2Routes({ app, supabase }) {
         countdownRes,
         coachesRes,
         adRowsRes,
-        mondayItemsRes,
+        mtdKpisRes,
+        metaSpendRes,
       ] = await Promise.allSettled([
         supabase.from('clients').select('id', { count: 'exact', head: true }).eq('is_active', true),
         supabase.from('clients').select('id', { count: 'exact', head: true }).gte('start_date', monthStartStr),
         supabase.from('client_countdown').select('id, full_name, coach_name, days_until_resign, tier, programmed_to').order('days_until_resign', { ascending: true }),
         supabase.from('coach_capacity').select('coach_name, active_clients, max_capacity, pct_full').order('active_clients', { ascending: false }),
         supabase.from('ad_metrics').select('date, spend, cash_collected').gte('date', start).lte('date', end).order('date', { ascending: true }),
-        cached('monday:items', 60_000, fetchBookedCallsItems).catch(err => { warnings.push(`monday: ${err.message}`); return []; }),
+        getBookedCallsKPIs({ from: monthStartStr, to: end }),
+        getMetaSpend(monthStartStr, end),
       ]);
 
       const val = (settled, label, fallback = null) => {
@@ -408,7 +413,8 @@ export function registerV2Routes({ app, supabase }) {
       const countdown = val(countdownRes, 'countdown', { data: [] })?.data || [];
       const coaches = val(coachesRes, 'coach_capacity', { data: [] })?.data || [];
       const adRows = val(adRowsRes, 'ad_metrics', { data: [] })?.data || [];
-      const mondayItems = mondayItemsRes.status === 'fulfilled' ? mondayItemsRes.value : [];
+      const mtdKpis = val(mtdKpisRes, 'booked_calls_mtd', null);
+      const metaSpend = val(metaSpendRes, 'meta_spend', null);
 
       const upcoming = (countdown || []).filter(c => c.days_until_resign != null && c.days_until_resign <= 30);
       const resigns = {
@@ -418,30 +424,29 @@ export function registerV2Routes({ app, supabase }) {
         upcoming: upcoming.slice(0, 12),
       };
 
+      // Ads spark from ad_metrics (per-day series); spend total prefers live Meta pull.
       const byDay = {};
       for (const r of adRows) {
         if (!byDay[r.date]) byDay[r.date] = { spend: 0, cash: 0 };
         byDay[r.date].spend += Number(r.spend || 0);
         byDay[r.date].cash += Number(r.cash_collected || 0);
       }
+      // If we got live Meta rows, use them for spend series (source of truth).
+      if (metaSpend?.byDay?.length) {
+        for (const d of metaSpend.byDay) {
+          if (!byDay[d.date]) byDay[d.date] = { spend: 0, cash: 0 };
+          byDay[d.date].spend = d.spend; // override — Meta live wins
+        }
+      }
       const daysArr = Object.keys(byDay).sort();
       const spark_spend = daysArr.map(d => byDay[d].spend);
       const spark_cash = daysArr.map(d => byDay[d].cash);
-      const totalSpend = spark_spend.reduce((s, v) => s + v, 0);
+      const totalSpend = metaSpend?.spend ?? spark_spend.reduce((s, v) => s + v, 0);
       const totalCashAds = spark_cash.reduce((s, v) => s + v, 0);
 
-      // MTD cash from Monday snapshot (already fetched above).
-      let mtdCashCollected = 0;
-      let mtdCashContracted = 0;
-      if (mondayItems.length) {
-        try {
-          const mtd = computeSalesSummary(mondayItems, monthStartStr, end);
-          mtdCashCollected = mtd.cash_collected;
-          mtdCashContracted = mtd.cash_contracted;
-        } catch (err) {
-          warnings.push(`mtd_summary: ${err.message}`);
-        }
-      }
+      // MTD cash from booked-calls single source of truth.
+      const mtdCashCollected = mtdKpis?.cashCollected ?? 0;
+      const mtdCashContracted = mtdKpis?.cashContracted ?? 0;
 
       return {
         window: { start, end, days },
@@ -546,22 +551,19 @@ export function registerV2Routes({ app, supabase }) {
   app.get('/api/v2/team/setters', async (req, res) => {
     const days = Math.max(1, Math.min(365, Number(req.query.days) || 30));
     try {
-      const [eodRollup, unified, ads, roster] = await Promise.all([
+      const { start, end } = windowFromDays(days);
+      const [eodRollup, kpis, ads, roster] = await Promise.all([
         getSetterEodRollup(days),
-        cached(`bc:unified:${days}`, 60_000, () => fetchBookedCallsUnified(days)),
-        (async () => {
-          const { start, end } = windowFromDays(days);
-          const { data } = await supabase
-            .from('ad_metrics')
-            .select('spend')
-            .gte('date', start)
-            .lte('date', end);
-          return (data || []).reduce((s, r) => s + Number(r.spend || 0), 0);
-        })(),
+        getBookedCallsKPIs({ from: start, to: end }),
+        getMetaSpend(start, end).then(r => r.spend).catch(() => 0),
         getTeamRoster(supabase),
       ]);
 
-      const bcSetters = bcGroupBySetter(unified.items);
+      // bySetter from new source: [{ name, booked, shown, closed }] w/ 0.5/0.5 split.
+      const bcSetters = kpis.bySetter.map(s => ({
+        setter: s.name, booked: s.booked, shown: s.shown, closed: s.closed,
+      }));
+      const unified = { window: { start, end, days }, items: kpis.items };
 
       // Build per-setter map keyed by short name.
       const map = new Map();
@@ -653,11 +655,20 @@ export function registerV2Routes({ app, supabase }) {
   app.get('/api/v2/team/closers', async (req, res) => {
     const days = Math.max(1, Math.min(365, Number(req.query.days) || 30));
     try {
-      const [unified, roster] = await Promise.all([
-        cached(`bc:unified:${days}`, 60_000, () => fetchBookedCallsUnified(days)),
+      const { start, end } = windowFromDays(days);
+      const [kpis, roster] = await Promise.all([
+        getBookedCallsKPIs({ from: start, to: end }),
         getTeamRoster(supabase),
       ]);
-      const bcClosers = bcGroupByCloser(unified.items);
+      const bcClosers = kpis.byCloser.map(c => ({
+        closer: c.name,
+        booked: c.booked,
+        shown: c.shown,
+        closed: c.closed,
+        cash_collected: c.cashCollected,
+        cash_contracted: c.cashContracted,
+      }));
+      const unified = { window: { start, end, days }, items: kpis.items };
 
       const map = new Map();
       const ensure = (short) => {

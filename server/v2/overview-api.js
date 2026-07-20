@@ -11,6 +11,8 @@ import {
   fetchBookedCallsItems,
   computeSalesSummary,
 } from './monday-sales.js';
+import { getBookedCallsKPIs } from './booked-calls.js';
+import { getMetaSpend } from './meta-ads.js';
 
 // ─── Utility ────────────────────────────────────────────────
 function isoDay(d) {
@@ -86,33 +88,44 @@ async function computeKpis(supabase) {
   const watch = (countdown || []).filter(c => c.tier === 'watch').length;
   const withinMonth = (countdown || []).filter(c => c.days_until_resign != null && c.days_until_resign <= 30).length;
 
-  // MTD cash from Monday
+  // MTD cash + funnel — pulled through single-source getBookedCallsKPIs.
+  // Spec: booked-calls.js + reference_booked_calls_dashboard_spec.md
   let mtdCashCollected = 0;
   let mtdCashContracted = 0;
   let wtdCashCollected = 0;
   let priorWkCashCollected = 0;
   let mtdRoas = null;
   try {
-    const items = await cached('monday:items', 60_000, fetchBookedCallsItems);
-    const mtd = computeSalesSummary(items, monthStartStr, todayStr);
-    mtdCashCollected = mtd.cash_collected;
-    mtdCashContracted = mtd.cash_contracted;
-    const wtd = computeSalesSummary(items, week.start, week.end);
-    wtdCashCollected = wtd.cash_collected;
-    const prior = computeSalesSummary(items, priorWeek.start, priorWeek.end);
-    priorWkCashCollected = prior.cash_collected;
+    const [mtd, wtd, prior] = await Promise.all([
+      getBookedCallsKPIs({ from: monthStartStr, to: todayStr }),
+      getBookedCallsKPIs({ from: week.start, to: week.end }),
+      getBookedCallsKPIs({ from: priorWeek.start, to: priorWeek.end }),
+    ]);
+    mtdCashCollected = mtd.cashCollected;
+    mtdCashContracted = mtd.cashContracted;
+    wtdCashCollected = wtd.cashCollected;
+    priorWkCashCollected = prior.cashCollected;
   } catch (_) {
     // Monday unreachable — MTD stays 0.
   }
 
-  // Ads MTD spend + ROAS
-  const { data: mtdAds } = await supabase
-    .from('ad_metrics')
-    .select('date, spend, cash_collected')
-    .gte('date', monthStartStr)
-    .lte('date', todayStr);
-  const mtdSpend = (mtdAds || []).reduce((s, r) => s + Number(r.spend || 0), 0);
-  const mtdAdCash = (mtdAds || []).reduce((s, r) => s + Number(r.cash_collected || 0), 0);
+  // Ads MTD spend — LIVE pull from Meta (source of truth), fall back to
+  // ad_metrics table if Meta call fails so the card doesn't blank out.
+  let mtdSpend = 0;
+  let mtdAdCash = 0;
+  try {
+    const live = await getMetaSpend(monthStartStr, todayStr);
+    mtdSpend = live.spend;
+  } catch (e) {
+    console.warn('[overview/kpis] Meta live spend failed, falling back to ad_metrics:', e.message);
+    const { data: mtdAds } = await supabase
+      .from('ad_metrics')
+      .select('date, spend, cash_collected')
+      .gte('date', monthStartStr)
+      .lte('date', todayStr);
+    mtdSpend = (mtdAds || []).reduce((s, r) => s + Number(r.spend || 0), 0);
+    mtdAdCash = (mtdAds || []).reduce((s, r) => s + Number(r.cash_collected || 0), 0);
+  }
   mtdRoas = mtdSpend > 0 ? (mtdCashCollected > 0 ? mtdCashCollected / mtdSpend : mtdAdCash / mtdSpend) : null;
 
   // Prior-week ad spend for spend delta

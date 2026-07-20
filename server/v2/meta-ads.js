@@ -116,3 +116,46 @@ export async function syncMetaAds(supabase, days = 30) {
   const rows = raw.map(normalizeMetaRow);
   return upsertAdMetrics(supabase, rows);
 }
+
+/**
+ * Live pull of Meta ad spend for a date window (inclusive). Bypasses Supabase.
+ * Used by the dashboard for CPA/CPBC math when we need current spend regardless
+ * of whether the last ad_metrics sync ran.
+ *
+ * @param {string} fromISO  YYYY-MM-DD (inclusive)
+ * @param {string} toISO    YYYY-MM-DD (inclusive)
+ * @returns {Promise<{ spend: number, byDay: Array<{ date: string, spend: number }> }>}
+ */
+export async function getMetaSpend(fromISO, toISO) {
+  if (!fromISO || !toISO) throw new Error('getMetaSpend: from + to (YYYY-MM-DD) required');
+  const token = requireEnv('META_ADS_TOKEN');
+  const account = requireEnv('META_AD_ACCOUNT_ID');
+
+  const url = new URL(`${META_API}/${account}/insights`);
+  url.searchParams.set('access_token', token);
+  url.searchParams.set('time_range', JSON.stringify({ since: fromISO, until: toISO }));
+  url.searchParams.set('time_increment', '1');
+  url.searchParams.set('level', 'account');
+  url.searchParams.set('fields', 'spend,date_start');
+  url.searchParams.set('limit', '500');
+
+  let spend = 0;
+  const byDay = [];
+  let next = url.toString();
+  while (next) {
+    const res = await fetchRetry(next, { method: 'GET' });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`Meta getMetaSpend ${res.status}: ${text.slice(0, 300)}`);
+    }
+    const json = await res.json();
+    for (const row of json.data || []) {
+      const daySpend = Number(row.spend || 0);
+      spend += daySpend;
+      byDay.push({ date: row.date_start, spend: daySpend });
+    }
+    next = json.paging?.next || null;
+  }
+  byDay.sort((a, b) => a.date.localeCompare(b.date));
+  return { spend, byDay };
+}
