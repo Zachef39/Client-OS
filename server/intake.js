@@ -40,22 +40,41 @@ function splitFullName(fullName) {
   return { firstName: parts[0] || 'Client', lastName: parts.slice(1).join(' ') || '—' };
 }
 
+async function postSlack(text) {
+  const url = process.env.SLACK_WEBHOOK;
+  if (!url) { console.warn('[slack] SLACK_WEBHOOK missing — skipping notify'); return; }
+  try {
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    if (!r.ok) console.warn(`[slack] post failed: ${r.status} ${await r.text()}`);
+  } catch (e) {
+    console.warn(`[slack] post error: ${e.message}`);
+  }
+}
+
 function parseHeightToCm(heightStr) {
   if (!heightStr) return null;
-  const s = heightStr.trim().toLowerCase();
+  // Normalize curly quotes → straight quotes so regex matches both
+  const s = heightStr.trim().toLowerCase().replace(/[’‘`]/g, "'").replace(/[”“]/g, '"');
   // 170cm / 170 cm
   const cmMatch = s.match(/(\d+\.?\d*)\s*cm/);
   if (cmMatch) return parseFloat(cmMatch[1]);
-  // 5'7" or 5'7 or 5ft7in
-  const ftMatch = s.match(/(\d+)\s*['ft]+\s*(\d+\.?\d*)/);
+  // 5'7" or 5'7 or 5ft7in — feet may be followed by ', ft, or nothing; inches optional
+  const ftMatch = s.match(/(\d+)\s*(?:'|ft)\s*(\d+\.?\d*)?/);
   if (ftMatch) {
     const ft = parseFloat(ftMatch[1]);
-    const inches = parseFloat(ftMatch[2]);
+    const inches = ftMatch[2] ? parseFloat(ftMatch[2]) : 0;
     return Math.round((ft * 30.48) + (inches * 2.54));
   }
-  // just a number → assume inches
+  // just a number → assume inches if ≥ 40, cm if ≥ 100; reject anything smaller (5 ≠ 5 inches)
   const num = parseFloat(s);
-  if (!isNaN(num)) return num > 100 ? num : Math.round(num * 2.54);
+  if (!isNaN(num)) {
+    if (num >= 100) return num;             // cm
+    if (num >= 40) return Math.round(num * 2.54); // inches
+  }
   return null;
 }
 
@@ -400,6 +419,9 @@ async function processIntakeSubmission({ supabase, intake_id, existingTrainerize
     .single();
   if (pErr) throw new Error(`Failed to create pending: ${pErr.message}`);
   const pendingId = pending.id;
+
+  // Notify Zach in Slack — fire-and-forget, never block pipeline
+  postSlack(`:clipboard: *Intake form submitted by ${intake.full_name}* — pipeline starting (pending id ${pendingId})`);
 
   const updatePending = async (patch) => {
     await supabase.from('pending_onboardings').update(patch).eq('id', pendingId);
