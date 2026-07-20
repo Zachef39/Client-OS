@@ -248,6 +248,9 @@ export function registerV2Routes({ app, supabase }) {
     try {
       const unified = await cached(`bc:unified:${days}`, 60_000, () => fetchBookedCallsUnified(days));
       const summary = summarizeBookedCalls(unified.items);
+      // Pipeline upcoming = calls with Sales Call Booked / Rebooked / 45 Qualified
+      // outcome scheduled today or later — what Zach can still act on.
+      if (unified.kpis?.pipelineUpcomingFuture != null) summary.upcoming = unified.kpis.pipelineUpcomingFuture;
       const bySource = bcGroupBySource(unified.items);
       const spark = bcDailySeries(unified.items, unified.window.start, unified.window.end);
       res.json({

@@ -39,6 +39,8 @@ const OUTCOME = {
   CANCELED: 'Canceled',
   NURTURE: 'Nurture',
   REBOOKED: 'Rebooked',
+  SALES_CALL_BOOKED: 'Sales Call Booked',
+  QUALIFIED_45: '45 Qualified',
 };
 
 // Per spec KPI definitions:
@@ -48,6 +50,8 @@ const CLOSED_OUTCOMES = new Set([OUTCOME.SOLD, OUTCOME.BLOODWORK_ONLY]);
 const NO_SHOW_OUTCOMES = new Set([OUTCOME.NO_SHOW]);
 const RESCHEDULED_OUTCOMES = new Set([OUTCOME.NEEDS_REBOOKING]);
 const DQ_CANCELED_OUTCOMES = new Set([OUTCOME.DQ, OUTCOME.CANCELED]);
+// Upcoming = on the calendar but not yet taken. Per Zach 2026-07-20.
+const UPCOMING_OUTCOMES = new Set([OUTCOME.SALES_CALL_BOOKED, OUTCOME.REBOOKED, OUTCOME.QUALIFIED_45]);
 
 // Organic keyword list (case-insensitive exact match). Everything else = paid.
 const ORGANIC_KEYWORDS = new Set(
@@ -238,6 +242,7 @@ function projectItem(item) {
   const isNoShow = NO_SHOW_OUTCOMES.has(outcome);
   const isRescheduled = RESCHEDULED_OUTCOMES.has(outcome);
   const isDqCanceled = DQ_CANCELED_OUTCOMES.has(outcome);
+  const isUpcoming = UPCOMING_OUTCOMES.has(outcome);
 
   // Ads-source classification — organic keyword list (case-insensitive exact match).
   // Missing keyword = paid (per spec).
@@ -265,6 +270,7 @@ function projectItem(item) {
     isNoShow,
     isRescheduled,
     isDqCanceled,
+    isUpcoming,
     isOrganic,
     isPaid,
   };
@@ -310,7 +316,22 @@ export async function getBookedCallsKPIs({ from, to } = {}) {
   if (!from || !to) throw new Error('getBookedCallsKPIs: from + to (YYYY-MM-DD) required');
   const all = await getSnapshot();
   const items = all.filter(it => it.callDate && it.callDate >= from && it.callDate <= to);
-  return computeKPIs(items, { from, to });
+  const kpis = computeKPIs(items, { from, to });
+
+  // Pipeline upcoming = every call on the board with a scheduled/rebooked/qualified
+  // outcome — regardless of window. Zach's spec: "if the outcome is 'sales call
+  // booked,' 'rebooked,' or 'sales,' those are all upcoming calls." (2026-07-20)
+  const today = isoToday();
+  const pipelineUpcoming = all.filter(it => it.isUpcoming).length;
+  const pipelineUpcomingFuture = all.filter(it => it.isUpcoming && it.callDate && it.callDate >= today).length;
+  kpis.pipelineUpcoming = pipelineUpcoming;
+  kpis.pipelineUpcomingFuture = pipelineUpcomingFuture;
+  return kpis;
+}
+
+function isoToday() {
+  const d = new Date();
+  return d.toISOString().slice(0, 10);
 }
 
 /**
@@ -318,7 +339,7 @@ export async function getBookedCallsKPIs({ from, to } = {}) {
  * Split out so tests + custom slices (per-closer view, per-source view) can reuse.
  */
 export function computeKPIs(items, { from, to }) {
-  let booked = 0, shown = 0, closed = 0, noShows = 0, rescheduled = 0, dqCanceled = 0;
+  let booked = 0, shown = 0, closed = 0, noShows = 0, rescheduled = 0, dqCanceled = 0, upcoming = 0;
   let cashContracted = 0, cashCollected = 0;
   let paidBooked = 0, organicBooked = 0, paidClosed = 0, organicClosed = 0;
 
@@ -334,6 +355,7 @@ export function computeKPIs(items, { from, to }) {
     if (it.isNoShow) noShows += 1;
     if (it.isRescheduled) rescheduled += 1;
     if (it.isDqCanceled) dqCanceled += 1;
+    if (it.isUpcoming) upcoming += 1;
     if (it.isClosed) {
       cashContracted += it.contracted;
       cashCollected += it.collected;
@@ -419,6 +441,7 @@ export function computeKPIs(items, { from, to }) {
     noShows,
     rescheduled,
     dqCanceled,
+    upcoming,
     showRate,
     closeRate,
     rescheduleRate,
@@ -522,10 +545,11 @@ export function classify(item) {
   const closed = !!item._isClosed;
   const noShow = !!item._isNoShow;
   const dqCanceled = !!item._isDqCanceled;
+  const upcoming = UPCOMING_OUTCOMES.has(item.outcome);
   return {
     is_booked: true,
-    is_upcoming: false,
-    is_completed: shown || noShow || dqCanceled || closed || (item.outcome === OUTCOME.NURTURE) || (item.outcome === OUTCOME.REBOOKED),
+    is_upcoming: upcoming,
+    is_completed: shown || noShow || dqCanceled || closed || (item.outcome === OUTCOME.NURTURE),
     is_pitched: shown,
     is_shown: shown,
     is_closed: closed,
@@ -543,7 +567,7 @@ export function classify(item) {
  * mapped from the new KPI numbers.
  */
 export function summarize(items) {
-  let booked = 0, shown = 0, closed = 0, noShow = 0, canceled = 0, dq = 0, nurture = 0, rebooked = 0;
+  let booked = 0, shown = 0, closed = 0, noShow = 0, canceled = 0, dq = 0, nurture = 0, rebooked = 0, upcoming = 0;
   let cashCollected = 0, cashContracted = 0;
   for (const it of items) {
     booked += 1;
@@ -554,14 +578,11 @@ export function summarize(items) {
     if (it.outcome === OUTCOME.DQ) dq += 1;
     if (it.outcome === OUTCOME.NURTURE) nurture += 1;
     if (it.outcome === OUTCOME.REBOOKED || it.outcome === OUTCOME.NEEDS_REBOOKING) rebooked += 1;
+    if (UPCOMING_OUTCOMES.has(it.outcome)) upcoming += 1;
   }
-  // For legacy "completed" (dashboard secondary row), a completed call = anything
-  // whose outcome isn't blank/upcoming. In the new spec every row we return has
-  // a `callDate <= today` semantics baked in when window ends today. Include all
-  // non-blank outcomes.
-  const completed = booked - items.filter(i => !i.outcome).length;
+  const completed = booked - upcoming;
   return {
-    booked, completed, upcoming: 0,
+    booked, completed, upcoming,
     pitched: shown, shown, closed,
     dq, no_show: noShow, canceled, nurture, rebooked,
     cash_collected: cashCollected, cash_contracted: cashContracted,

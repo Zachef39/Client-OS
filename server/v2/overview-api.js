@@ -62,10 +62,13 @@ async function cached(key, ttlMs, fn) {
 
 // ─── Endpoint: KPIs w/ deltas ───────────────────────────────
 async function computeKpis(supabase) {
-  // Month-to-date
+  // Month window: 1st → end-of-month so future "upcoming" calls appear.
+  // Historical MTD (cash, ads spend, past calls) still bounded to today via todayStr.
   const monthStart = new Date();
   monthStart.setDate(1);
   const monthStartStr = isoDay(monthStart);
+  const monthEnd = new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 0);
+  const monthEndStr = isoDay(monthEnd);
   const todayStr = isoDay(new Date());
 
   // Prior-month same-day window (for WoW: WTD vs prior 7d)
@@ -97,7 +100,7 @@ async function computeKpis(supabase) {
   let mtdRoas = null;
   try {
     const [mtd, wtd, prior] = await Promise.all([
-      getBookedCallsKPIs({ from: monthStartStr, to: todayStr }),
+      getBookedCallsKPIs({ from: monthStartStr, to: monthEndStr }),
       getBookedCallsKPIs({ from: week.start, to: week.end }),
       getBookedCallsKPIs({ from: priorWeek.start, to: priorWeek.end }),
     ]);
