@@ -274,7 +274,7 @@ async function main() {
   for (const [name, fn] of [
     ['critical_resigns', checkCriticalResigns],
     ['coach_overloaded', checkCoachOverloaded],
-    ['missed_eod', checkMissedEod],
+    // ['missed_eod', checkMissedEod], // disabled per Zach 2026-07-20 — noisy, ignore missed setter/closer EODs
     ['bloodwork_pdf_new', checkNewBloodworkPdfs],
   ]) {
     try {

@@ -54,8 +54,8 @@ export function startCronJobs() {
   // Monday Clients Board assigned_coach → clients (daily @ 05:30 UTC)
   cron.schedule('30 5 * * *', () => runScript('sync-assigned-coach.mjs'));
 
-  // Slack alerts monitor (every 4 hours)
-  cron.schedule('0 */4 * * *', () => runScript('alerts-monitor.mjs'));
+  // Slack alerts monitor DISABLED 2026-07-18 per Zach — only pre-call form should ping Slack.
+  // cron.schedule('0 */4 * * *', () => runScript('alerts-monitor.mjs'));
 
-  console.log('[cron] 4 jobs scheduled (UTC): 05:00 ads · 05:15 programmed-to · 05:30 assigned-coach · */4h alerts');
+  console.log('[cron] 3 jobs scheduled (UTC): 05:00 ads · 05:15 programmed-to · 05:30 assigned-coach');
 }
