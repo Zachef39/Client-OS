@@ -1,7 +1,7 @@
 // v2 API routes — mounted at /api/v2/*
 // Exports a function that takes ({ app, supabase }) and attaches the routes.
 
-import { syncMetaAds, getMetaSpend } from './meta-ads.js';
+import { syncMetaAds, getMetaSpend, fetchMetaDailyCampaigns, normalizeMetaRow } from './meta-ads.js';
 import {
   fetchBookedCallsItems,
   computeSalesSummary,
@@ -62,60 +62,57 @@ const cached = cachedFetch;
 
 export function registerV2Routes({ app, supabase }) {
   // ── Ads ────────────────────────────────────────────
+  // Ads endpoints — LIVE from Meta Graph API, cross-joined w/ Monday for
+  // booked/shown/closed/cash. Cached 5 min in-process so tab loads snappy.
+  // Falls back to Supabase ad_metrics snapshot only if Meta is unreachable.
   app.get('/api/v2/ads/summary', async (req, res) => {
     const days = Math.max(1, Math.min(365, Number(req.query.days) || 30));
     const { start, end } = windowFromDays(days);
 
     try {
-      const { data: rows, error } = await supabase
-        .from('ad_metrics')
-        .select('*')
-        .gte('date', start)
-        .lte('date', end);
-      if (error) throw error;
+      const [rawCampaigns, kpis] = await Promise.all([
+        cached(`meta:campaigns:${days}`, 300_000, () => fetchMetaDailyCampaigns(days)),
+        getBookedCallsKPIs({ from: start, to: end }),
+      ]);
+      const paidItems = kpis.items.filter(it => it.isPaid);
 
       const perCampaign = {};
-      let totalSpend = 0, totalImpressions = 0, totalClicks = 0;
-      let totalMessages = 0, totalBooked = 0, totalShown = 0, totalClosed = 0;
-      let totalCashCollected = 0, totalCashContracted = 0;
-
-      for (const r of rows || []) {
-        const key = r.campaign_id || '__account__';
+      let totalSpend = 0, totalImpressions = 0, totalClicks = 0, totalMessages = 0;
+      for (const r of rawCampaigns) {
+        const n = normalizeMetaRow(r);
+        const key = n.campaign_id || '__account__';
         if (!perCampaign[key]) {
           perCampaign[key] = {
-            campaign_id: r.campaign_id,
-            campaign_name: r.campaign_name || '(account)',
-            spend: 0, impressions: 0, clicks: 0,
-            messages: 0, booked_calls: 0, shown_calls: 0, closed: 0,
+            campaign_id: n.campaign_id,
+            campaign_name: n.campaign_name || '(account)',
+            spend: 0, impressions: 0, clicks: 0, messages: 0,
+            booked_calls: 0, shown_calls: 0, closed: 0,
             cash_collected: 0, cash_contracted: 0,
           };
         }
         const c = perCampaign[key];
-        c.spend += Number(r.spend || 0);
-        c.impressions += Number(r.impressions || 0);
-        c.clicks += Number(r.clicks || 0);
-        c.messages += Number(r.messages || 0);
-        c.booked_calls += Number(r.booked_calls || 0);
-        c.shown_calls += Number(r.shown_calls || 0);
-        c.closed += Number(r.closed || 0);
-        c.cash_collected += Number(r.cash_collected || 0);
-        c.cash_contracted += Number(r.cash_contracted || 0);
-
-        totalSpend += Number(r.spend || 0);
-        totalImpressions += Number(r.impressions || 0);
-        totalClicks += Number(r.clicks || 0);
-        totalMessages += Number(r.messages || 0);
-        totalBooked += Number(r.booked_calls || 0);
-        totalShown += Number(r.shown_calls || 0);
-        totalClosed += Number(r.closed || 0);
-        totalCashCollected += Number(r.cash_collected || 0);
-        totalCashContracted += Number(r.cash_contracted || 0);
+        c.spend += n.spend; c.impressions += n.impressions;
+        c.clicks += n.clicks; c.messages += n.messages;
+        totalSpend += n.spend; totalImpressions += n.impressions;
+        totalClicks += n.clicks; totalMessages += n.messages;
       }
+
+      // Cross-join Monday: booked/shown/closed/cash for paid-source items only.
+      const totalBooked = paidItems.length;
+      const totalShown = paidItems.filter(it => it.isShown).length;
+      const totalClosed = paidItems.filter(it => it.isClosed).length;
+      const totalCashCollected = paidItems.filter(it => it.isClosed).reduce((s, it) => s + it.collected, 0);
+      const totalCashContracted = paidItems.filter(it => it.isClosed).reduce((s, it) => s + it.contracted, 0);
 
       const campaigns = Object.values(perCampaign).map(c => ({
         ...c,
         roas: c.spend > 0 ? c.cash_collected / c.spend : null,
       })).sort((a, b) => b.spend - a.spend);
+
+      // CPA math (per Zach 2026-07-20): total spend / ALL closes — not just
+      // paid-attributed — because every close counts against every ad dollar.
+      const totalClosesAllTraffic = kpis.closed;
+      const totalBookedAllTraffic = kpis.booked;
 
       const totals = {
         spend: totalSpend,
@@ -130,18 +127,43 @@ export function registerV2Routes({ app, supabase }) {
         roas: totalSpend > 0 ? totalCashCollected / totalSpend : null,
         cpm: totalImpressions > 0 ? (totalSpend / totalImpressions) * 1000 : null,
         cpl: totalMessages > 0 ? totalSpend / totalMessages : null,
-        cpbc: totalBooked > 0 ? totalSpend / totalBooked : null,
+        cpbc: totalBookedAllTraffic > 0 ? totalSpend / totalBookedAllTraffic : null,
+        cpa: totalClosesAllTraffic > 0 ? totalSpend / totalClosesAllTraffic : null,
       };
 
-      res.json({ window: { start, end, days }, totals, campaigns });
+      res.json({ window: { start, end, days }, totals, campaigns, source: 'meta_live' });
     } catch (e) {
-      console.error('[ads/summary]', e);
-      res.status(200).json({
-        _error: e.message, _partial: true,
-        window: { start, end, days },
-        totals: { spend: 0, impressions: 0, clicks: 0, messages: 0, booked_calls: 0, shown_calls: 0, closed: 0, cash_collected: 0, cash_contracted: 0, roas: null, cpm: null, cpl: null, cpbc: null },
-        campaigns: [],
-      });
+      console.error('[ads/summary] Meta live failed, falling back to ad_metrics:', e.message);
+      // Fallback: legacy Supabase snapshot (may be stale).
+      try {
+        const { data: rows } = await supabase
+          .from('ad_metrics')
+          .select('*')
+          .gte('date', start)
+          .lte('date', end);
+        const perCampaign = {};
+        let totalSpend = 0, totalImpressions = 0, totalClicks = 0, totalMessages = 0;
+        for (const r of rows || []) {
+          const key = r.campaign_id || '__account__';
+          if (!perCampaign[key]) {
+            perCampaign[key] = { campaign_id: r.campaign_id, campaign_name: r.campaign_name || '(account)', spend: 0, impressions: 0, clicks: 0, messages: 0, booked_calls: 0, shown_calls: 0, closed: 0, cash_collected: 0, cash_contracted: 0 };
+          }
+          const c = perCampaign[key];
+          c.spend += Number(r.spend || 0); c.impressions += Number(r.impressions || 0); c.clicks += Number(r.clicks || 0); c.messages += Number(r.messages || 0);
+          totalSpend += Number(r.spend || 0); totalImpressions += Number(r.impressions || 0); totalClicks += Number(r.clicks || 0); totalMessages += Number(r.messages || 0);
+        }
+        const campaigns = Object.values(perCampaign).map(c => ({ ...c, roas: null })).sort((a, b) => b.spend - a.spend);
+        res.json({
+          window: { start, end, days },
+          totals: { spend: totalSpend, impressions: totalImpressions, clicks: totalClicks, messages: totalMessages, booked_calls: 0, shown_calls: 0, closed: 0, cash_collected: 0, cash_contracted: 0, roas: null, cpm: totalImpressions > 0 ? (totalSpend / totalImpressions) * 1000 : null, cpl: null, cpbc: null, cpa: null },
+          campaigns,
+          source: 'supabase_snapshot',
+          _partial: true,
+          _error: `Meta live unreachable: ${e.message}`,
+        });
+      } catch (e2) {
+        res.status(200).json({ _error: e.message, _partial: true, window: { start, end, days }, totals: { spend: 0, impressions: 0, clicks: 0, messages: 0, booked_calls: 0, shown_calls: 0, closed: 0, cash_collected: 0, cash_contracted: 0, roas: null, cpm: null, cpl: null, cpbc: null, cpa: null }, campaigns: [], source: 'error' });
+      }
     }
   });
 
@@ -149,37 +171,38 @@ export function registerV2Routes({ app, supabase }) {
     const days = Math.max(1, Math.min(365, Number(req.query.days) || 30));
     const { start, end } = windowFromDays(days);
     try {
-      const { data: rows, error } = await supabase
-        .from('ad_metrics')
-        .select('date, spend, impressions, clicks, messages, cash_collected, cash_contracted')
-        .gte('date', start)
-        .lte('date', end)
-        .order('date', { ascending: true });
-      if (error) throw error;
+      const [rawCampaigns, kpis] = await Promise.all([
+        cached(`meta:campaigns:${days}`, 300_000, () => fetchMetaDailyCampaigns(days)),
+        getBookedCallsKPIs({ from: start, to: end }),
+      ]);
 
-      // Roll up to per-day
+      // Per-day spend from Meta live
       const byDay = {};
-      for (const r of rows || []) {
-        if (!byDay[r.date]) byDay[r.date] = { date: r.date, spend: 0, impressions: 0, clicks: 0, messages: 0, cash_collected: 0, cash_contracted: 0 };
-        const b = byDay[r.date];
-        b.spend += Number(r.spend || 0);
-        b.impressions += Number(r.impressions || 0);
-        b.clicks += Number(r.clicks || 0);
-        b.messages += Number(r.messages || 0);
-        b.cash_collected += Number(r.cash_collected || 0);
-        b.cash_contracted += Number(r.cash_contracted || 0);
+      for (const r of rawCampaigns) {
+        const n = normalizeMetaRow(r);
+        if (!byDay[n.date]) byDay[n.date] = { date: n.date, spend: 0, impressions: 0, clicks: 0, messages: 0, cash_collected: 0, cash_contracted: 0 };
+        const b = byDay[n.date];
+        b.spend += n.spend; b.impressions += n.impressions; b.clicks += n.clicks; b.messages += n.messages;
       }
+      // Per-day cash from Monday paid items
+      for (const it of kpis.items) {
+        if (!it.isPaid || !it.isClosed || !it.callDate) continue;
+        if (!byDay[it.callDate]) byDay[it.callDate] = { date: it.callDate, spend: 0, impressions: 0, clicks: 0, messages: 0, cash_collected: 0, cash_contracted: 0 };
+        byDay[it.callDate].cash_collected += it.collected;
+        byDay[it.callDate].cash_contracted += it.contracted;
+      }
+
       const list = Object.values(byDay).sort((a, b) => a.date.localeCompare(b.date));
       const spend_series = list.map(d => d.spend);
       const cash_series = list.map(d => d.cash_collected);
       const roas_series = list.map(d => (d.spend > 0 ? d.cash_collected / d.spend : 0));
 
-      res.json({ window: { start, end, days }, rows: list, spend_series, cash_series, roas_series });
+      res.json({ window: { start, end, days }, rows: list, spend_series, cash_series, roas_series, source: 'meta_live' });
     } catch (e) {
-      console.error('[ads/daily]', e);
+      console.error('[ads/daily] Meta live failed:', e.message);
       res.status(200).json({
         _error: e.message, _partial: true,
-        window: { start, end, days }, rows: [], spend_series: [], cash_series: [], roas_series: [],
+        window: { start, end, days }, rows: [], spend_series: [], cash_series: [], roas_series: [], source: 'error',
       });
     }
   });
