@@ -349,32 +349,31 @@ export function registerPnlRoutes({ app, supabase }) {
   // GET /api/v2/pnl/summary?period=mtd
   app.get('/api/v2/pnl/summary', async (req, res) => {
     const { start, end, period } = windowFromPeriod(req.query.period);
-    try {
-      const [revenue, expensesResp] = await Promise.all([
-        fetchStripeRevenue(start, end).catch(err => ({ total: 0, by_day: {}, count: 0, error: err.message })),
-        supabase.from('expenses').select('date, amount').gte('date', start).lte('date', end),
-      ]);
-      if (expensesResp.error) throw expensesResp.error;
+    const warnings = [];
+    const [revenue, expensesResp] = await Promise.all([
+      fetchStripeRevenue(start, end).catch(err => ({ total: 0, by_day: {}, count: 0, error: err.message })),
+      supabase.from('expenses').select('date, amount').gte('date', start).lte('date', end)
+        .then(r => r, err => ({ data: null, error: { message: err.message || String(err) } })),
+    ]);
+    if (revenue.error) warnings.push(`stripe: ${revenue.error}`);
+    if (expensesResp.error) warnings.push(`supabase(expenses): ${expensesResp.error.message}`);
 
-      const expenseTotal = (expensesResp.data || []).reduce((s, r) => s + Number(r.amount || 0), 0);
+    const expenseRows = expensesResp.data || [];
+    const expenseTotal = expenseRows.reduce((s, r) => s + Number(r.amount || 0), 0);
+    const spark = buildSparkSeries(revenue.by_day, expenseRows);
 
-      // Sparklines: last 30 days regardless of period
-      const spark = buildSparkSeries(revenue.by_day, expensesResp.data);
-
-      res.json({
-        period, window: { start, end },
-        revenue: Number(revenue.total.toFixed(2)),
-        revenue_count: revenue.count,
-        revenue_warning: revenue.warning || revenue.error || null,
-        expenses: Number(expenseTotal.toFixed(2)),
-        net: Number((revenue.total - expenseTotal).toFixed(2)),
-        spark_revenue: spark.revenue,
-        spark_expenses: spark.expenses,
-      });
-    } catch (e) {
-      console.error('[pnl/summary]', e);
-      res.status(500).json({ error: e.message });
-    }
+    res.json({
+      period, window: { start, end },
+      revenue: Number((revenue.total || 0).toFixed(2)),
+      revenue_count: revenue.count || 0,
+      revenue_warning: revenue.warning || revenue.error || null,
+      expenses: Number(expenseTotal.toFixed(2)),
+      net: Number(((revenue.total || 0) - expenseTotal).toFixed(2)),
+      spark_revenue: spark.revenue,
+      spark_expenses: spark.expenses,
+      _partial: warnings.length > 0,
+      _warnings: warnings,
+    });
   });
 
   // GET /api/v2/pnl/revenue?period=mtd
@@ -385,7 +384,11 @@ export function registerPnlRoutes({ app, supabase }) {
       res.json({ period, window: { start, end }, ...revenue });
     } catch (e) {
       console.error('[pnl/revenue]', e);
-      res.status(500).json({ error: e.message });
+      res.status(200).json({
+        _partial: true, _error: e.message,
+        period, window: { start, end },
+        total: 0, by_day: {}, count: 0, warning: e.message,
+      });
     }
   });
 
@@ -393,36 +396,41 @@ export function registerPnlRoutes({ app, supabase }) {
   app.get('/api/v2/pnl/expenses', async (req, res) => {
     const { start, end, period } = windowFromPeriod(req.query.period);
     const limit = Math.max(1, Math.min(500, Number(req.query.limit) || 100));
+    let rows = [];
+    let warning = null;
     try {
-      const { data: rows, error } = await supabase
+      const resp = await supabase
         .from('expenses')
         .select('id, date, amount, merchant, category, subcategory, source_file')
         .gte('date', start).lte('date', end)
         .order('date', { ascending: false })
         .limit(limit);
-      if (error) throw error;
-
-      const byCategory = {};
-      let total = 0;
-      for (const r of rows || []) {
-        const cat = r.category || 'Uncategorized';
-        byCategory[cat] = (byCategory[cat] || 0) + Number(r.amount || 0);
-        total += Number(r.amount || 0);
-      }
-      const categories = Object.entries(byCategory)
-        .map(([label, value]) => ({ label, value: Number(value.toFixed(2)) }))
-        .sort((a, b) => b.value - a.value);
-
-      res.json({
-        period, window: { start, end },
-        total: Number(total.toFixed(2)),
-        rows: rows || [],
-        categories,
-      });
+      if (resp.error) throw resp.error;
+      rows = resp.data || [];
     } catch (e) {
       console.error('[pnl/expenses]', e);
-      res.status(500).json({ error: e.message });
+      warning = e.message || String(e);
     }
+
+    const byCategory = {};
+    let total = 0;
+    for (const r of rows) {
+      const cat = r.category || 'Uncategorized';
+      byCategory[cat] = (byCategory[cat] || 0) + Number(r.amount || 0);
+      total += Number(r.amount || 0);
+    }
+    const categories = Object.entries(byCategory)
+      .map(([label, value]) => ({ label, value: Number(value.toFixed(2)) }))
+      .sort((a, b) => b.value - a.value);
+
+    res.json({
+      period, window: { start, end },
+      total: Number(total.toFixed(2)),
+      rows,
+      categories,
+      _partial: warning != null,
+      _warnings: warning ? [warning] : [],
+    });
   });
 
   // GET /api/v2/pnl/monthly?months=12
@@ -433,36 +441,33 @@ export function registerPnlRoutes({ app, supabase }) {
     const startISO = start.toISOString().slice(0, 10);
     const endISO = todayISO();
 
-    try {
-      const [revenue, expensesResp] = await Promise.all([
-        fetchStripeRevenue(startISO, endISO).catch(() => ({ by_day: {} })),
-        supabase.from('expenses').select('date, amount').gte('date', startISO).lte('date', endISO),
-      ]);
+    const warnings = [];
+    const [revenue, expensesResp] = await Promise.all([
+      fetchStripeRevenue(startISO, endISO).catch(err => { warnings.push(`stripe: ${err.message}`); return { by_day: {} }; }),
+      supabase.from('expenses').select('date, amount').gte('date', startISO).lte('date', endISO)
+        .then(r => r, err => { warnings.push(`supabase(expenses): ${err.message || err}`); return { data: [] }; }),
+    ]);
+    if (expensesResp.error) warnings.push(`supabase(expenses): ${expensesResp.error.message}`);
 
-      const byMonth = {};
-      const ensure = (k) => (byMonth[k] ||= { month: k, revenue: 0, expenses: 0 });
+    const byMonth = {};
+    const ensure = (k) => (byMonth[k] ||= { month: k, revenue: 0, expenses: 0 });
 
-      for (const [day, v] of Object.entries(revenue.by_day || {})) {
-        ensure(day.slice(0, 7)).revenue += v;
-      }
-      for (const r of expensesResp.data || []) {
-        ensure(String(r.date).slice(0, 7)).expenses += Number(r.amount || 0);
-      }
-      // Fill missing months
-      for (let i = 0; i < months; i++) {
-        const d = new Date(now.getFullYear(), now.getMonth() - (months - 1 - i), 1);
-        const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-        ensure(k);
-      }
-      const rows = Object.values(byMonth)
-        .map(r => ({ ...r, revenue: Number(r.revenue.toFixed(2)), expenses: Number(r.expenses.toFixed(2)), net: Number((r.revenue - r.expenses).toFixed(2)) }))
-        .sort((a, b) => a.month.localeCompare(b.month));
-
-      res.json({ months, rows });
-    } catch (e) {
-      console.error('[pnl/monthly]', e);
-      res.status(500).json({ error: e.message });
+    for (const [day, v] of Object.entries(revenue.by_day || {})) {
+      ensure(day.slice(0, 7)).revenue += v;
     }
+    for (const r of expensesResp.data || []) {
+      ensure(String(r.date).slice(0, 7)).expenses += Number(r.amount || 0);
+    }
+    for (let i = 0; i < months; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - (months - 1 - i), 1);
+      const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      ensure(k);
+    }
+    const rows = Object.values(byMonth)
+      .map(r => ({ ...r, revenue: Number(r.revenue.toFixed(2)), expenses: Number(r.expenses.toFixed(2)), net: Number((r.revenue - r.expenses).toFixed(2)) }))
+      .sort((a, b) => a.month.localeCompare(b.month));
+
+    res.json({ months, rows, _partial: warnings.length > 0, _warnings: warnings });
   });
 
   // POST /api/v2/pnl/import-csv  { filename, csv_text }
