@@ -96,6 +96,7 @@ export async function upsertAdMetrics(supabase, rows) {
   // because the unique index uses coalesce() and PostgREST can't infer it.
   let count = 0;
   for (const r of rows) {
+    // no-retry (write path): delete + insert per (date, campaign_id)
     const q = supabase.from('ad_metrics')
       .delete()
       .eq('date', r.date);
@@ -104,6 +105,7 @@ export async function upsertAdMetrics(supabase, rows) {
     const { error: delErr } = await q;
     if (delErr) throw new Error(`ad_metrics delete failed: ${delErr.message}`);
 
+    // no-retry (write path)
     const { error: insErr } = await supabase.from('ad_metrics').insert(r);
     if (insErr) throw new Error(`ad_metrics insert failed: ${insErr.message}`);
     count += 1;

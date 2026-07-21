@@ -3,6 +3,7 @@
 // Writes: coach_settings.max_capacity, clients.assigned_coach.
 
 import { cachedFetch, invalidate } from './cache.js';
+import { sbRetry } from './supabase-retry.js';
 
 const UNASSIGNED = '(unassigned)';
 
@@ -14,10 +15,10 @@ function normCoach(name) {
 
 async function listActiveCoaches(supabase) {
   // Coaches from the view (has assigned + unassigned bucket).
-  const { data, error } = await supabase
+  const { data, error } = await sbRetry(() => supabase
     .from('coach_capacity')
     .select('coach_name, active_clients, max_capacity, pct_full')
-    .order('active_clients', { ascending: false });
+    .order('active_clients', { ascending: false }));
   if (error) throw error;
   return (data || []).map(c => ({
     coach_name: c.coach_name,
@@ -29,11 +30,11 @@ async function listActiveCoaches(supabase) {
 
 async function lastCheckinByClient(supabase, clientIds) {
   if (!clientIds.length) return {};
-  const { data, error } = await supabase
+  const { data, error } = await sbRetry(() => supabase
     .from('weekly_checkins')
     .select('client_id, checkin_date, tier')
     .in('client_id', clientIds)
-    .order('checkin_date', { ascending: false });
+    .order('checkin_date', { ascending: false }));
   if (error) throw error;
   const latest = {};
   for (const row of data || []) {
@@ -46,11 +47,11 @@ async function lastCheckinByClient(supabase, clientIds) {
 
 async function lastNoteByClient(supabase, clientIds) {
   if (!clientIds.length) return {};
-  const { data, error } = await supabase
+  const { data, error } = await sbRetry(() => supabase
     .from('client_notes')
     .select('client_id, created_at')
     .in('client_id', clientIds)
-    .order('created_at', { ascending: false });
+    .order('created_at', { ascending: false }));
   if (error) throw error;
   const latest = {};
   for (const row of data || []) {
@@ -122,7 +123,7 @@ export function registerCapacityRoutes({ app, supabase }) {
       } else {
         q = q.eq('assigned_coach', coach);
       }
-      const { data: rows, error } = await q;
+      const { data: rows, error } = await sbRetry(() => q);
       if (error) throw error;
 
       const clientIds = (rows || []).map(r => r.id);
@@ -130,9 +131,9 @@ export function registerCapacityRoutes({ app, supabase }) {
       // Parallel: last check-in + countdown tier
       const [checkins, { data: countdown }] = await Promise.all([
         lastCheckinByClient(supabase, clientIds),
-        supabase.from('client_countdown')
+        sbRetry(() => supabase.from('client_countdown')
           .select('id, days_until_resign, tier, programmed_to')
-          .in('id', clientIds.length ? clientIds : ['00000000-0000-0000-0000-000000000000']),
+          .in('id', clientIds.length ? clientIds : ['00000000-0000-0000-0000-000000000000'])),
       ]);
 
       const countdownById = {};
@@ -173,7 +174,7 @@ export function registerCapacityRoutes({ app, supabase }) {
         .select('start_date, is_active, assigned_coach');
       if (coach === UNASSIGNED) q = q.is('assigned_coach', null);
       else q = q.eq('assigned_coach', coach);
-      const { data: rows, error } = await q;
+      const { data: rows, error } = await sbRetry(() => q);
       if (error) throw error;
 
       // Build weekly buckets — last N days, week-ending on today.
@@ -211,6 +212,7 @@ export function registerCapacityRoutes({ app, supabase }) {
       return res.status(400).json({ error: 'cannot set capacity on unassigned bucket' });
     }
     try {
+      // no-retry (write path): upsert coach max_capacity
       const { error } = await supabase
         .from('coach_settings')
         .upsert({ coach_name: coach, max_capacity: max, updated_at: new Date().toISOString() }, { onConflict: 'coach_name' });
@@ -233,11 +235,11 @@ export function registerCapacityRoutes({ app, supabase }) {
       const newCoach = to_coach === UNASSIGNED || to_coach === '' ? null : String(to_coach).trim();
 
       // Verify current coach matches (guardrail against stale UI overwrites)
-      const { data: current, error: getErr } = await supabase
+      const { data: current, error: getErr } = await sbRetry(() => supabase
         .from('clients')
         .select('id, assigned_coach, full_name')
         .eq('id', client_id)
-        .maybeSingle();
+        .maybeSingle());
       if (getErr) throw getErr;
       if (!current) return res.status(404).json({ error: 'client not found' });
 
@@ -251,6 +253,7 @@ export function registerCapacityRoutes({ app, supabase }) {
         });
       }
 
+      // no-retry (write path): reassign coach
       const { error: updErr } = await supabase
         .from('clients')
         .update({ assigned_coach: newCoach, updated_at: new Date().toISOString() })

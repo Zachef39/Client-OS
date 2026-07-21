@@ -13,6 +13,7 @@ import {
 } from './monday-sales.js';
 import { getBookedCallsKPIs } from './booked-calls.js';
 import { getMetaSpend } from './meta-ads.js';
+import { sbRetry } from './supabase-retry.js';
 
 // ─── Utility ────────────────────────────────────────────────
 function isoDay(d) {
@@ -77,14 +78,14 @@ async function computeKpis(supabase) {
 
   // Active client + new this month
   const [{ count: activeCount }, { count: newThisMonth }] = await Promise.all([
-    supabase.from('clients').select('id', { count: 'exact', head: true }).eq('is_active', true),
-    supabase.from('clients').select('id', { count: 'exact', head: true }).gte('start_date', monthStartStr),
+    sbRetry(() => supabase.from('clients').select('id', { count: 'exact', head: true }).eq('is_active', true)),
+    sbRetry(() => supabase.from('clients').select('id', { count: 'exact', head: true }).gte('start_date', monthStartStr)),
   ]);
 
   // Countdown for resign counts
-  const { data: countdown } = await supabase
+  const { data: countdown } = await sbRetry(() => supabase
     .from('client_countdown')
-    .select('id, tier, days_until_resign');
+    .select('id, tier, days_until_resign'));
   const critical7 = (countdown || []).filter(c => c.tier === 'critical' && (c.days_until_resign ?? 999) <= 7 && (c.days_until_resign ?? -999) >= -999).length;
   const critical = (countdown || []).filter(c => c.tier === 'critical').length;
   const urgent = (countdown || []).filter(c => c.tier === 'urgent').length;
@@ -121,38 +122,38 @@ async function computeKpis(supabase) {
     mtdSpend = live.spend;
   } catch (e) {
     console.warn('[overview/kpis] Meta live spend failed, falling back to ad_metrics:', e.message);
-    const { data: mtdAds } = await supabase
+    const { data: mtdAds } = await sbRetry(() => supabase
       .from('ad_metrics')
       .select('date, spend, cash_collected')
       .gte('date', monthStartStr)
-      .lte('date', todayStr);
+      .lte('date', todayStr));
     mtdSpend = (mtdAds || []).reduce((s, r) => s + Number(r.spend || 0), 0);
     mtdAdCash = (mtdAds || []).reduce((s, r) => s + Number(r.cash_collected || 0), 0);
   }
   mtdRoas = mtdSpend > 0 ? (mtdCashCollected > 0 ? mtdCashCollected / mtdSpend : mtdAdCash / mtdSpend) : null;
 
   // Prior-week ad spend for spend delta
-  const { data: priorWkAds } = await supabase
+  const { data: priorWkAds } = await sbRetry(() => supabase
     .from('ad_metrics')
     .select('spend')
     .gte('date', priorWeek.start)
-    .lte('date', priorWeek.end);
-  const { data: wtdAds } = await supabase
+    .lte('date', priorWeek.end));
+  const { data: wtdAds } = await sbRetry(() => supabase
     .from('ad_metrics')
     .select('spend, date')
     .gte('date', week.start)
     .lte('date', week.end)
-    .order('date', { ascending: true });
+    .order('date', { ascending: true }));
   const wtdSpend = (wtdAds || []).reduce((s, r) => s + Number(r.spend || 0), 0);
   const priorWkSpend = (priorWkAds || []).reduce((s, r) => s + Number(r.spend || 0), 0);
 
   // 30d sparklines for cash + spend
-  const { data: adRows30 } = await supabase
+  const { data: adRows30 } = await sbRetry(() => supabase
     .from('ad_metrics')
     .select('date, spend, cash_collected')
     .gte('date', isoDay(daysAgo(29)))
     .lte('date', todayStr)
-    .order('date', { ascending: true });
+    .order('date', { ascending: true }));
   const byDay = {};
   for (const r of adRows30 || []) {
     if (!byDay[r.date]) byDay[r.date] = { spend: 0, cash: 0 };
@@ -198,14 +199,14 @@ async function computeActionQueue(supabase) {
   const todayStr = isoDay(new Date());
 
   // 1. Critical resigns ≤ 7 days
-  const { data: countdown } = await supabase
+  const { data: countdown } = await sbRetry(() => supabase
     .from('client_countdown')
     .select('id, full_name, coach_name, days_until_resign, tier')
     .in('tier', ['critical', 'urgent'])
     .not('days_until_resign', 'is', null)
     .lte('days_until_resign', 7)
     .order('days_until_resign', { ascending: true })
-    .limit(3);
+    .limit(3));
   for (const c of countdown || []) {
     const d = c.days_until_resign;
     const timing = d < 0
@@ -224,20 +225,20 @@ async function computeActionQueue(supabase) {
 
   // 2. Missed VA EOD (yesterday not logged, roster people only)
   try {
-    const { data: eodRows } = await supabase
+    const { data: eodRows } = await sbRetry(() => supabase
       .from('team_eod')
       .select('va_name, date')
       .gte('date', isoDay(daysAgo(3)))
-      .order('date', { ascending: false });
+      .order('date', { ascending: false }));
     const lastByName = new Map();
     for (const r of eodRows || []) {
       if (!lastByName.has(r.va_name)) lastByName.set(r.va_name, r.date);
     }
     // Only flag people who exist in roster
-    const { data: roster } = await supabase
+    const { data: roster } = await sbRetry(() => supabase
       .from('team_roster')
       .select('name, role')
-      .eq('is_active', true);
+      .eq('is_active', true));
     for (const rp of roster || []) {
       const last = lastByName.get(rp.name);
       if (last === todayStr) continue; // already logged
@@ -255,14 +256,14 @@ async function computeActionQueue(supabase) {
   } catch (_) { /* roster table may not exist yet */ }
 
   // 3. Overdue open coach todos (created > 3 days ago, priority high, still open)
-  const { data: overdue } = await supabase
+  const { data: overdue } = await sbRetry(() => supabase
     .from('coach_todos')
     .select('id, client_name, category, note, created_at, priority')
     .eq('status', 'open')
     .lte('created_at', isoDay(daysAgo(3)) + 'T23:59:59')
     .in('priority', ['high', 'urgent'])
     .order('created_at', { ascending: true })
-    .limit(5);
+    .limit(5));
   const overdueCount = (overdue || []).length;
   if (overdueCount > 0) {
     actions.push({
@@ -276,10 +277,10 @@ async function computeActionQueue(supabase) {
   }
 
   // 4. Coach at 100%+ capacity
-  const { data: coaches } = await supabase
+  const { data: coaches } = await sbRetry(() => supabase
     .from('coach_capacity')
     .select('coach_name, active_clients, max_capacity, pct_full')
-    .order('pct_full', { ascending: false });
+    .order('pct_full', { ascending: false }));
   for (const c of coaches || []) {
     const pct = Number(c.pct_full);
     if (pct >= 100 && c.coach_name && c.coach_name !== '(unassigned)') {
@@ -334,10 +335,10 @@ async function computeWoW(supabase) {
 
   // Ads via Supabase
   const [{ data: adsThis }, { data: adsPrior }] = await Promise.all([
-    supabase.from('ad_metrics').select('spend, cash_collected, booked_calls')
-      .gte('date', week.start).lte('date', week.end),
-    supabase.from('ad_metrics').select('spend, cash_collected, booked_calls')
-      .gte('date', priorWeek.start).lte('date', priorWeek.end),
+    sbRetry(() => supabase.from('ad_metrics').select('spend, cash_collected, booked_calls')
+      .gte('date', week.start).lte('date', week.end)),
+    sbRetry(() => supabase.from('ad_metrics').select('spend, cash_collected, booked_calls')
+      .gte('date', priorWeek.start).lte('date', priorWeek.end)),
   ]);
   const adSum = (rows) => (rows || []).reduce((acc, r) => ({
     spend: acc.spend + Number(r.spend || 0),
@@ -362,10 +363,10 @@ async function computeWoW(supabase) {
 
   // Team via team_eod
   const [{ data: teamThis }, { data: teamPrior }] = await Promise.all([
-    supabase.from('team_eod').select('dms_sent, booked_calls')
-      .gte('date', week.start).lte('date', week.end),
-    supabase.from('team_eod').select('dms_sent, booked_calls')
-      .gte('date', priorWeek.start).lte('date', priorWeek.end),
+    sbRetry(() => supabase.from('team_eod').select('dms_sent, booked_calls')
+      .gte('date', week.start).lte('date', week.end)),
+    sbRetry(() => supabase.from('team_eod').select('dms_sent, booked_calls')
+      .gte('date', priorWeek.start).lte('date', priorWeek.end)),
   ]);
   const teamSum = (rows) => (rows || []).reduce((acc, r) => ({
     dms: acc.dms + Number(r.dms_sent || 0),
@@ -397,11 +398,11 @@ async function computeTopMovers(supabase) {
   const todayStr = isoDay(new Date());
 
   // Best campaign by ROAS (min $50 spend)
-  const { data: adRows } = await supabase
+  const { data: adRows } = await sbRetry(() => supabase
     .from('ad_metrics')
     .select('campaign_name, spend, cash_collected, booked_calls')
     .gte('date', since)
-    .lte('date', todayStr);
+    .lte('date', todayStr));
   const perCampaign = new Map();
   for (const r of adRows || []) {
     const key = r.campaign_name || '(account)';
@@ -441,18 +442,18 @@ async function computeTopMovers(supabase) {
   // At-risk client: longest silence (no note) among active clients w/ resign ≤ 30 days
   let atRiskClient = null;
   try {
-    const { data: countdown } = await supabase
+    const { data: countdown } = await sbRetry(() => supabase
       .from('client_countdown')
       .select('id, full_name, coach_name, days_until_resign, tier')
       .not('days_until_resign', 'is', null)
-      .lte('days_until_resign', 30);
+      .lte('days_until_resign', 30));
     const ids = (countdown || []).map(c => c.id);
     if (ids.length) {
-      const { data: notes } = await supabase
+      const { data: notes } = await sbRetry(() => supabase
         .from('client_notes')
         .select('client_id, created_at')
         .in('client_id', ids)
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false }));
       const lastByClient = new Map();
       for (const n of notes || []) {
         if (!lastByClient.has(n.client_id)) lastByClient.set(n.client_id, n.created_at);

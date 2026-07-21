@@ -4,6 +4,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { fetchRetry } from './http.js';
 import { cachedFetch } from './cache.js';
+import { sbRetry } from './supabase-retry.js';
 
 // ─── Windows ───────────────────────────────────────────────
 function todayISO() {
@@ -352,7 +353,7 @@ export function registerPnlRoutes({ app, supabase }) {
     const warnings = [];
     const [revenue, expensesResp] = await Promise.all([
       fetchStripeRevenue(start, end).catch(err => ({ total: 0, by_day: {}, count: 0, error: err.message })),
-      supabase.from('expenses').select('date, amount').gte('date', start).lte('date', end)
+      sbRetry(() => supabase.from('expenses').select('date, amount').gte('date', start).lte('date', end))
         .then(r => r, err => ({ data: null, error: { message: err.message || String(err) } })),
     ]);
     if (revenue.error) warnings.push(`stripe: ${revenue.error}`);
@@ -399,12 +400,12 @@ export function registerPnlRoutes({ app, supabase }) {
     let rows = [];
     let warning = null;
     try {
-      const resp = await supabase
+      const resp = await sbRetry(() => supabase
         .from('expenses')
         .select('id, date, amount, merchant, category, subcategory, source_file')
         .gte('date', start).lte('date', end)
         .order('date', { ascending: false })
-        .limit(limit);
+        .limit(limit));
       if (resp.error) throw resp.error;
       rows = resp.data || [];
     } catch (e) {
@@ -444,7 +445,7 @@ export function registerPnlRoutes({ app, supabase }) {
     const warnings = [];
     const [revenue, expensesResp] = await Promise.all([
       fetchStripeRevenue(startISO, endISO).catch(err => { warnings.push(`stripe: ${err.message}`); return { by_day: {} }; }),
-      supabase.from('expenses').select('date, amount').gte('date', startISO).lte('date', endISO)
+      sbRetry(() => supabase.from('expenses').select('date, amount').gte('date', startISO).lte('date', endISO))
         .then(r => r, err => { warnings.push(`supabase(expenses): ${err.message || err}`); return { data: [] }; }),
     ]);
     if (expensesResp.error) warnings.push(`supabase(expenses): ${expensesResp.error.message}`);
@@ -498,6 +499,7 @@ export function registerPnlRoutes({ app, supabase }) {
         source_file: filename,
       }));
 
+      // no-retry (write path): upsert of imported CSV rows
       const { error } = await supabase
         .from('expenses')
         .upsert(payload, { onConflict: 'date,amount,merchant,source_file', ignoreDuplicates: true });
@@ -524,6 +526,7 @@ export function registerPnlRoutes({ app, supabase }) {
       return res.status(400).json({ error: `category must be one of: ${CATEGORY_LIST.join(', ')}` });
     }
     try {
+      // no-retry (write path): manual category re-classify
       const { data, error } = await supabase
         .from('expenses')
         .update({ category, subcategory: subcategory || null })

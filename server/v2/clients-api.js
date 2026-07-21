@@ -10,6 +10,7 @@ import { spawn } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { cachedFetch } from './cache.js';
+import { sbRetry } from './supabase-retry.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -145,13 +146,13 @@ function computeProgress({ starting_weight, goal_weight, start_date, latest_weig
 async function loadRosterBase(supabase) {
   const warnings = [];
   const [countdownRes, clientsRes] = await Promise.allSettled([
-    withTimeout(supabase
+    sbRetry(() => withTimeout(supabase
       .from('client_countdown')
-      .select('id, full_name, coach_name, programmed_to, days_until_resign, tier')),
-    withTimeout(supabase
+      .select('id, full_name, coach_name, programmed_to, days_until_resign, tier'))),
+    sbRetry(() => withTimeout(supabase
       .from('clients')
       .select('id, full_name, assigned_coach, client_status, is_active, is_internal, email, phone, instagram_handle, start_date, goal, goal_weight_lbs, starting_weight_lbs, daily_calorie_target, daily_protein_target_g, program_term, program_dropdown, age, location, weekly_target_workouts')
-      .eq('is_active', true)),
+      .eq('is_active', true))),
   ]);
 
   const countdown = countdownRes.status === 'fulfilled' && !countdownRes.value.error
@@ -215,29 +216,29 @@ async function loadRosterExtras(supabase, ids) {
   if (!ids.length) return empty;
 
   const [notesRes, todosRes, checkinsRes, churnRes] = await Promise.allSettled([
-    withTimeout(supabase
+    sbRetry(() => withTimeout(supabase
       .from('client_notes')
       .select('client_id, created_at')
       .in('client_id', ids)
-      .order('created_at', { ascending: false })),
-    withTimeout(supabase
+      .order('created_at', { ascending: false }))),
+    sbRetry(() => withTimeout(supabase
       .from('coach_todos')
       .select('client_id, status')
       .in('client_id', ids)
-      .in('status', ['open', 'snoozed'])),
+      .in('status', ['open', 'snoozed']))),
     // Pull recent weighed check-ins; we'll pick latest per client in JS to keep it one query.
-    withTimeout(supabase
+    sbRetry(() => withTimeout(supabase
       .from('weekly_checkins')
       .select('client_id, checkin_date, weight_lbs')
       .in('client_id', ids)
       .not('weight_lbs', 'is', null)
       .order('checkin_date', { ascending: false })
-      .limit(3000)),
-    withTimeout(supabase
+      .limit(3000))),
+    sbRetry(() => withTimeout(supabase
       .from('client_churn_risk')
       .select('client_id, risk_tier, risk_score, primary_reasons, recommended_action, scored_at')
       .in('client_id', ids)
-      .order('scored_at', { ascending: false })),
+      .order('scored_at', { ascending: false }))),
   ]);
 
   const warnings = [];
@@ -426,16 +427,16 @@ export function registerClientsRoutes({ app, supabase }) {
     const cutoffStr = cutoff.toISOString().slice(0, 10);
     try {
       const [profileRes, checkinsRes] = await Promise.all([
-        supabase.from('clients')
+        sbRetry(() => supabase.from('clients')
           .select('id, full_name, starting_weight_lbs, goal_weight_lbs, start_date')
           .eq('id', id)
-          .single(),
-        supabase.from('weekly_checkins')
+          .single()),
+        sbRetry(() => supabase.from('weekly_checkins')
           .select('checkin_date, weight_lbs')
           .eq('client_id', id)
           .not('weight_lbs', 'is', null)
           .gte('checkin_date', cutoffStr)
-          .order('checkin_date', { ascending: true }),
+          .order('checkin_date', { ascending: true })),
       ]);
       if (profileRes.error) throw profileRes.error;
       if (checkinsRes.error) throw checkinsRes.error;
@@ -468,9 +469,9 @@ export function registerClientsRoutes({ app, supabase }) {
   // ── Countdown (raw view) ────────────────────────────────────
   app.get('/api/v2/clients/countdown', async (_req, res) => {
     try {
-      const { data, error } = await supabase
+      const { data, error } = await sbRetry(() => supabase
         .from('client_countdown')
-        .select('id, full_name, coach_name, programmed_to, days_until_resign, tier');
+        .select('id, full_name, coach_name, programmed_to, days_until_resign, tier'));
       if (error) throw error;
       // Sort nulls last, asc by days.
       const rows = (data || []).slice().sort((a, b) => {
@@ -492,11 +493,11 @@ export function registerClientsRoutes({ app, supabase }) {
   app.get('/api/v2/clients/extensions', async (req, res) => {
     try {
       const days = Math.max(1, Math.min(180, Number(req.query.days) || 30));
-      const { data, error } = await supabase
+      const { data, error } = await sbRetry(() => supabase
         .from('client_countdown')
         .select('id, full_name, coach_name, programmed_to, days_until_resign, tier')
         .not('days_until_resign', 'is', null)
-        .lte('days_until_resign', days);
+        .lte('days_until_resign', days));
       if (error) throw error;
       const rows = (data || []).slice().sort(
         (a, b) => (a.days_until_resign ?? 999) - (b.days_until_resign ?? 999)
@@ -522,15 +523,15 @@ export function registerClientsRoutes({ app, supabase }) {
     }
     try {
       const [profileRes, countdownRes, programStateRes, notesRes, rulesRes, todosRes] = await Promise.all([
-        supabase.from('clients').select('*').eq('id', id).single(),
-        supabase.from('client_countdown').select('*').eq('id', id).maybeSingle(),
-        supabase.from('client_program_state').select('*').eq('client_id', id).maybeSingle(),
-        supabase.from('client_notes').select('id, note_type, body, tags, pinned, created_by, created_at')
-          .eq('client_id', id).order('created_at', { ascending: false }).limit(5),
-        supabase.from('client_rules').select('id, category, rule_text, severity, active, added_at')
-          .eq('client_id', id).eq('active', true).order('added_at', { ascending: false }),
-        supabase.from('coach_todos').select('id, category, note, status, priority, created_at, snooze_until')
-          .eq('client_id', id).in('status', ['open', 'snoozed']).order('created_at', { ascending: false }),
+        sbRetry(() => supabase.from('clients').select('*').eq('id', id).single()),
+        sbRetry(() => supabase.from('client_countdown').select('*').eq('id', id).maybeSingle()),
+        sbRetry(() => supabase.from('client_program_state').select('*').eq('client_id', id).maybeSingle()),
+        sbRetry(() => supabase.from('client_notes').select('id, note_type, body, tags, pinned, created_by, created_at')
+          .eq('client_id', id).order('created_at', { ascending: false }).limit(5)),
+        sbRetry(() => supabase.from('client_rules').select('id, category, rule_text, severity, active, added_at')
+          .eq('client_id', id).eq('active', true).order('added_at', { ascending: false })),
+        sbRetry(() => supabase.from('coach_todos').select('id, category, note, status, priority, created_at, snooze_until')
+          .eq('client_id', id).in('status', ['open', 'snoozed']).order('created_at', { ascending: false })),
       ]);
       if (profileRes.error) throw profileRes.error;
 

@@ -1,6 +1,8 @@
 // Team KPI backend — pure helpers over `team_eod` (daily logs) + `team_roster` (identity).
 // team_roster is authoritative for who's on the team; team_eod holds their daily activity.
 // SEEDED_ROSTER is a last-resort fallback if both tables are empty (first boot).
+import { sbRetry } from './supabase-retry.js';
+
 const SEEDED_ROSTER = [
   { va_name: 'Zach', role: 'head_coach' },
   { va_name: 'Dina', role: 'setter' },
@@ -40,9 +42,9 @@ function safeDiv(a, b) {
 
 // ─── Seed one sample row if the table is empty (so the UI renders) ───
 export async function seedIfEmpty(supabase) {
-  const { count, error } = await supabase
+  const { count, error } = await sbRetry(() => supabase
     .from('team_eod')
-    .select('id', { count: 'exact', head: true });
+    .select('id', { count: 'exact', head: true }));
   if (error) throw error;
   if ((count || 0) > 0) return { seeded: false };
 
@@ -58,6 +60,7 @@ export async function seedIfEmpty(supabase) {
     cash_collected: 2500,
     notes: 'sample — delete via SQL when real data starts flowing',
   };
+  // no-retry (write path): first-boot seed row
   const { error: insertErr } = await supabase.from('team_eod').insert(sample);
   if (insertErr) throw insertErr;
   return { seeded: true };
@@ -69,10 +72,10 @@ export async function getRoster(supabase) {
   const seen = new Map();
 
   // 1. Primary source: team_roster where is_active=true.
-  const { data: rosterRows, error: rosterErr } = await supabase
+  const { data: rosterRows, error: rosterErr } = await sbRetry(() => supabase
     .from('team_roster')
     .select('name, role, is_active, slack_handle, start_date')
-    .eq('is_active', true);
+    .eq('is_active', true));
   if (rosterErr && rosterErr.code !== '42P01') throw rosterErr; // 42P01 = table missing
   for (const r of rosterRows || []) {
     if (!r.name) continue;
@@ -85,10 +88,10 @@ export async function getRoster(supabase) {
   }
 
   // 2. Union with anyone who has EOD history but isn't in the roster yet.
-  const { data: eodRows, error: eodErr } = await supabase
+  const { data: eodRows, error: eodErr } = await sbRetry(() => supabase
     .from('team_eod')
     .select('va_name, role, date')
-    .order('date', { ascending: false });
+    .order('date', { ascending: false }));
   if (eodErr) throw eodErr;
   for (const row of eodRows || []) {
     if (!row.va_name) continue;
@@ -116,7 +119,7 @@ export async function getSummary(supabase, days, roleFilter) {
     .lte('date', end);
   if (roleFilter) query = query.eq('role', roleFilter);
 
-  const { data, error } = await query;
+  const { data, error } = await sbRetry(() => query);
   if (error) throw error;
 
   const roster = await getRoster(supabase);
@@ -220,13 +223,13 @@ export async function getDaily(supabase, vaName, days) {
   if (!vaName) throw new Error('va_name required');
   const { start, end } = windowDays(days);
 
-  const { data, error } = await supabase
+  const { data, error } = await sbRetry(() => supabase
     .from('team_eod')
     .select('*')
     .eq('va_name', vaName)
     .gte('date', start)
     .lte('date', end)
-    .order('date', { ascending: true });
+    .order('date', { ascending: true }));
   if (error) throw error;
 
   const byDate = new Map((data || []).map(r => [r.date, r]));
@@ -247,11 +250,11 @@ export async function getDaily(supabase, vaName, days) {
 // ─── Team-wide daily trend rollup ───
 export async function getTrends(supabase, days) {
   const { start, end } = windowDays(days);
-  const { data, error } = await supabase
+  const { data, error } = await sbRetry(() => supabase
     .from('team_eod')
     .select('date, dms_sent, replies, booked_calls, closes, cash_collected')
     .gte('date', start)
-    .lte('date', end);
+    .lte('date', end));
   if (error) throw error;
 
   const byDate = new Map();
@@ -292,6 +295,7 @@ export async function upsertEod(supabase, payload) {
     notes: payload.notes ? String(payload.notes).slice(0, 500) : null,
   };
 
+  // no-retry (write path): upsert EOD row
   const { data, error } = await supabase
     .from('team_eod')
     .upsert(clean, { onConflict: 'va_name,date' })
@@ -302,10 +306,10 @@ export async function upsertEod(supabase, payload) {
 
 // ─── Latest EOD row per person — for "hasn't logged today" flag ───
 export async function getLatestEod(supabase) {
-  const { data, error } = await supabase
+  const { data, error } = await sbRetry(() => supabase
     .from('team_eod')
     .select('va_name, role, date')
-    .order('date', { ascending: false });
+    .order('date', { ascending: false }));
   if (error) throw error;
 
   const roster = await getRoster(supabase);

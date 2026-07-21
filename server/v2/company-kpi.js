@@ -18,6 +18,7 @@
 import { fetchBookedCallsItems } from './monday-sales.js';
 import { fetchRetry } from './http.js';
 import { cachedFetch } from './cache.js';
+import { sbRetry } from './supabase-retry.js';
 
 const MONDAY_API = 'https://api.monday.com/v2';
 
@@ -135,11 +136,11 @@ function emptyMonth(label) {
 async function fetchAdSpendByMonth(supabase, year) {
   const start = `${year}-01-01`;
   const end = `${year}-12-31`;
-  const { data, error } = await supabase
+  const { data, error } = await sbRetry(() => supabase
     .from('ad_metrics')
     .select('date, spend')
     .gte('date', start)
-    .lte('date', end);
+    .lte('date', end));
   if (error) throw error;
 
   const perMonth = Array(12).fill(0);

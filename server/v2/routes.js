@@ -43,6 +43,7 @@ import { registerClientsRoutes } from './clients-api.js';
 import { registerOverviewRoutes } from './overview-api.js';
 import { registerCompanyKpiRoutes } from './company-kpi.js';
 import { cachedFetch, invalidate } from './cache.js';
+import { sbRetry } from './supabase-retry.js';
 
 // ─── Utility ───
 function windowFromDays(days) {
@@ -136,11 +137,11 @@ export function registerV2Routes({ app, supabase }) {
       console.error('[ads/summary] Meta live failed, falling back to ad_metrics:', e.message);
       // Fallback: legacy Supabase snapshot (may be stale).
       try {
-        const { data: rows } = await supabase
+        const { data: rows } = await sbRetry(() => supabase
           .from('ad_metrics')
           .select('*')
           .gte('date', start)
-          .lte('date', end);
+          .lte('date', end));
         const perCampaign = {};
         let totalSpend = 0, totalImpressions = 0, totalClicks = 0, totalMessages = 0;
         for (const r of rows || []) {
@@ -421,11 +422,11 @@ export function registerV2Routes({ app, supabase }) {
         mtdKpisRes,
         metaSpendRes,
       ] = await Promise.allSettled([
-        supabase.from('clients').select('id', { count: 'exact', head: true }).eq('is_active', true),
-        supabase.from('clients').select('id', { count: 'exact', head: true }).gte('start_date', monthStartStr),
-        supabase.from('client_countdown').select('id, full_name, coach_name, days_until_resign, tier, programmed_to').order('days_until_resign', { ascending: true }),
-        supabase.from('coach_capacity').select('coach_name, active_clients, max_capacity, pct_full').order('active_clients', { ascending: false }),
-        supabase.from('ad_metrics').select('date, spend, cash_collected').gte('date', start).lte('date', end).order('date', { ascending: true }),
+        sbRetry(() => supabase.from('clients').select('id', { count: 'exact', head: true }).eq('is_active', true)),
+        sbRetry(() => supabase.from('clients').select('id', { count: 'exact', head: true }).gte('start_date', monthStartStr)),
+        sbRetry(() => supabase.from('client_countdown').select('id, full_name, coach_name, days_until_resign, tier, programmed_to').order('days_until_resign', { ascending: true })),
+        sbRetry(() => supabase.from('coach_capacity').select('coach_name, active_clients, max_capacity, pct_full').order('active_clients', { ascending: false })),
+        sbRetry(() => supabase.from('ad_metrics').select('date, spend, cash_collected').gte('date', start).lte('date', end).order('date', { ascending: true })),
         getBookedCallsKPIs({ from: monthStartStr, to: end }),
         getMetaSpend(monthStartStr, end),
       ]);
