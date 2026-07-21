@@ -29,6 +29,11 @@ const state = {
   tab: 'overview',
   period: localStorage.getItem('v2_period') || 'mtd',
   get days() { return daysForPeriod(this.period); },
+  // In-memory GET response cache. Every tab render calls api() → we memoize the
+  // JSON response for 5 min so tab-switching + repeated renders don't re-hit
+  // slow upstream endpoints (Monday, Meta). Refresh button clears it.
+  apiCache: new Map(),         // key = url → { data, ts }
+  apiCacheTtlMs: 5 * 60 * 1000,
 };
 
 const TAB_META = {
@@ -46,6 +51,13 @@ const TAB_META = {
 // Endpoints degrade to 200 w/ `_error` + `_partial` fields instead of 500.
 // We still throw on hard non-OK responses (network, 401, 502 gateway errors).
 export async function api(path, opts = {}) {
+  const method = (opts.method || 'GET').toUpperCase();
+  // In-memory cache for GET requests only — mutations (POST/PUT/DELETE) always hit the network.
+  // Pass opts.noCache: true to force a live fetch (used by Refresh).
+  if (method === 'GET' && !opts.noCache) {
+    const hit = state.apiCache.get(path);
+    if (hit && (Date.now() - hit.ts) < state.apiCacheTtlMs) return hit.data;
+  }
   const res = await fetch(path, {
     headers: { 'Content-Type': 'application/json' },
     ...opts,
@@ -59,7 +71,14 @@ export async function api(path, opts = {}) {
   if (data && data._partial) {
     console.warn(`[api:partial] ${path}`, data._error || data._warnings);
   }
+  if (method === 'GET') state.apiCache.set(path, { data, ts: Date.now() });
   return data;
+}
+
+/** Clear cached API responses. Optionally scoped to a URL prefix. */
+export function clearApiCache(prefix) {
+  if (!prefix) { state.apiCache.clear(); return; }
+  for (const k of state.apiCache.keys()) if (k.startsWith(prefix)) state.apiCache.delete(k);
 }
 
 /**
@@ -380,7 +399,7 @@ export function toast(message, ms = 2600) {
 }
 
 // ─── Router ───
-function activateTab(tab) {
+function activateTab(tab, { forceRefresh = false } = {}) {
   if (!TAB_META[tab]) tab = 'overview';
   state.tab = tab;
 
@@ -396,10 +415,12 @@ function activateTab(tab) {
   document.getElementById('page-title').textContent = meta.title;
   document.getElementById('page-sub').textContent = meta.sub;
 
-  // Render
+  // Render — every tab re-runs render() so DOM event listeners are always live.
+  // Fast path: api() reads from apiCache (5 min TTL) so this is almost-instant
+  // for tabs that hit already-fetched endpoints. Refresh clears the cache.
+  if (forceRefresh) clearApiCache();
   const root = document.getElementById('tab-root');
   root.innerHTML = KPISkeleton(4);
-  // async render — swap on ready
   Promise.resolve()
     .then(() => meta.render(root, { days: state.days }))
     .catch(err => {
@@ -412,7 +433,6 @@ function activateTab(tab) {
       `;
     });
 
-  // URL hash for shareability
   history.replaceState(null, '', `#${tab}`);
 }
 
@@ -437,8 +457,10 @@ function bindNav() {
     }
   });
 
-  // Refresh
-  document.getElementById('refresh-btn')?.addEventListener('click', () => activateTab(state.tab));
+  // Refresh — force live fetch for every endpoint the tab uses.
+  document.getElementById('refresh-btn')?.addEventListener('click', () => {
+    activateTab(state.tab, { forceRefresh: true });
+  });
 }
 
 async function checkHealth() {
